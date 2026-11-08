@@ -59,6 +59,14 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Storage and shared state
 # ---------------------------------------------------------------------------
+# Watchers live in memory, which is all the engine and the page ever read, so storage never
+# slows either down. With DATABASE_URL set (a Space secret), a background thread copies each
+# change to Postgres, so watchers survive restarts and redeploys. Without it they go to a
+# local JSON file, which a Space loses whenever it restarts.
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+DB_TABLE = "booktick_watchers"
+# Rewritten on every check and meaningless after a restart, so they aren't stored.
+UNSTORED_KEYS = ("last_checked", "last_checked_ts", "last_result")
 TASKS_FILE = "booktick_watchers.json"
 LEGACY_TASKS_FILE = "district_tasks.json"  # file name used before the BookTick rename
 DEFAULT_URL = "https://www.district.in/movies/inox-phoenix-market-city-formerly-jazz-cinemas-velachery-chennai-CD1020779"
@@ -69,31 +77,28 @@ MAX_LOG_LINES = 300
 tasks_lock = threading.RLock()
 log_lock = threading.Lock()
 wake_engine = threading.Event()  # set it to make the engine check right away
-
-
-def load_tasks():
-    for path in (TASKS_FILE, LEGACY_TASKS_FILE):
-        if os.path.exists(path):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                return {}
-    return {}
-
+save_needed = threading.Event()  # set it to make the database writer save right away
 
 app_state = {
-    "tasks": load_tasks(),
+    "tasks": {},  # filled by load_tasks() at launch
     "paused": False,
     "interval_sec": 5,
     "check_count": 0,
     "last_check_time": None,
     "logs": [],
 }
+# What the database holds right now (in stored_form), so only changes get written.
+_db = {"ready": False, "stored": {}}
 
 
 def save_tasks():
-    """Write all watchers to disk. Call while holding tasks_lock."""
+    """Save all watchers. Call while holding tasks_lock.
+
+    With a database this only wakes the background writer, so it never waits on the network.
+    """
+    if DATABASE_URL:
+        save_needed.set()
+        return
     tmp = TASKS_FILE + ".tmp"
     try:
         with open(tmp, "w", encoding="utf-8") as f:
@@ -118,6 +123,116 @@ def redact(text, *secrets):
         if secret:
             text = text.replace(secret, "•••")
     return text
+
+
+# --- Postgres -----------------------------------------------------------------
+def db_reason(e):
+    """A short reason for the public activity log, without host names or the password.
+
+    The full error (still without the password) goes only to the Space's container logs.
+    """
+    full = redact(e, DATABASE_URL, urlparse(DATABASE_URL).password)
+    print(f"Database error: {full}", flush=True)
+    match = re.search(r"(?:ERROR|FATAL):\s*([^\n]+)", full)
+    reason = match.group(1) if match else re.split(r"failed:\s*", (full.splitlines() or [""])[0])[-1]
+    return shorten(reason.strip(), 160) or type(e).__name__
+
+
+def stored_form(tasks):
+    """The watchers as they're saved: plain JSON copies, without the per-check fields."""
+    return {tid: {k: v for k, v in t.items() if k not in UNSTORED_KEYS}
+            for tid, t in json.loads(json.dumps(tasks)).items()}
+
+
+def db_connect():
+    import psycopg  # only needed when DATABASE_URL is set
+
+    # A fresh connection per save: Neon closes idle ones when it suspends. prepare_threshold=None
+    # because a pooled endpoint may not keep prepared statements between transactions.
+    return psycopg.connect(DATABASE_URL, connect_timeout=10, prepare_threshold=None)
+
+
+def db_load():
+    """Every saved watcher (creating the table the first time)."""
+    with db_connect() as conn:
+        conn.execute(f"CREATE TABLE IF NOT EXISTS {DB_TABLE} ("
+                     "id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz NOT NULL DEFAULT now())")
+        rows = conn.execute(f"SELECT id, data FROM {DB_TABLE}").fetchall()
+    return {tid: dict(data, id=tid) for tid, data in rows}
+
+
+def db_flush():
+    """Write the watchers that changed since the last save, and remove deleted ones."""
+    if not _db["ready"]:
+        # The database was down at launch: load it now, keeping watchers added meanwhile.
+        saved = db_load()
+        with tasks_lock:
+            for tid, task in saved.items():
+                app_state["tasks"].setdefault(tid, task)
+        _db.update(ready=True, stored=stored_form(saved))
+        add_log(f"🗄️ Database connected. Loaded {plural(len(saved), 'saved watcher')}.")
+        wake_engine.set()
+    with tasks_lock:
+        current = stored_form(app_state["tasks"])
+    stored = _db["stored"]
+    changed = [(tid, data) for tid, data in current.items() if stored.get(tid) != data]
+    removed = [tid for tid in stored if tid not in current]
+    if not changed and not removed:
+        return
+    from psycopg.types.json import Jsonb
+
+    with db_connect() as conn, conn.cursor() as cur:
+        if changed:
+            cur.executemany(f"INSERT INTO {DB_TABLE} (id, data, updated_at) VALUES (%s, %s, now()) "
+                            "ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = now()",
+                            [(tid, Jsonb(data)) for tid, data in changed])
+        if removed:
+            cur.execute(f"DELETE FROM {DB_TABLE} WHERE id = ANY(%s)", (removed,))
+    _db["stored"] = current
+
+
+def storage_loop():
+    """The database writer: saves soon after each change, and retries every 30s if a save fails."""
+    failing = False
+    while True:
+        save_needed.wait(timeout=30)
+        save_needed.clear()
+        try:
+            db_flush()
+            if failing:
+                add_log("🗄️ Database is back. Watchers are being saved again.")
+            failing = False
+        except Exception as e:
+            if not failing:
+                add_log(f"⚠️ Couldn't save watchers to the database: {db_reason(e)}. Retrying every 30s.")
+            failing = True
+
+
+def load_tasks():
+    """The watchers to start with: from Postgres when it's set up, else the local file."""
+    if DATABASE_URL:
+        try:
+            tasks = db_load()
+            _db.update(ready=True, stored=stored_form(tasks))
+            add_log(f"🗄️ Loaded {plural(len(tasks), 'saved watcher')} from the database.")
+            return tasks
+        except Exception as e:
+            # One quick try so the Space starts promptly; the writer keeps trying after that.
+            add_log(f"⚠️ Couldn't reach the database: {db_reason(e)}. Retrying in the background.")
+            return {}
+    for path in (TASKS_FILE, LEGACY_TASKS_FILE):
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                return {}
+    return {}
+
+
+def start_storage():
+    if DATABASE_URL:
+        threading.Thread(target=storage_loop, daemon=True).start()
 
 
 # ---------------------------------------------------------------------------
@@ -953,6 +1068,14 @@ def footer_html():
 </div>"""
 
 
+RESTART_TIP = (
+    "Watchers are saved, so a restart doesn't lose them. But checking stops while this Space sleeps, "
+    "which happens after a long time without visitors. If you're waiting days, check back now and then."
+    if DATABASE_URL else
+    "Watchers are wiped when this Space restarts or goes to sleep after a long time without visitors. "
+    "If you're waiting days, check back now and then."
+)
+
 HELP_HTML = f"""
 <aside class="bt-help">
   <h3>How it works</h3>
@@ -965,7 +1088,7 @@ HELP_HTML = f"""
   <h4>Good to know</h4>
   <ul class="bt-tips">
     <li>{icon("lock")}<span>Use a topic name nobody would guess, like <code>arun_tickets_982</code>. Anyone who knows it can read your alerts.</span></li>
-    <li>{icon("alert")}<span>Watchers are wiped when this Space restarts or goes to sleep after a long time without visitors. If you're waiting days, check back now and then.</span></li>
+    <li>{icon("alert")}<span>{RESTART_TIP}</span></li>
     <li>{icon("clock")}<span>All times are Indian Standard Time.</span></li>
   </ul>
 </aside>"""
@@ -2770,5 +2893,7 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
     ).then(None, js="() => (window.BookTick ? window.BookTick.booted() : [])")  # runs even if loading failed
 
 # --- Launch -------------------------------------------------------------------
+app_state["tasks"] = load_tasks()
+start_storage()
 start_engine()
 demo.queue(default_concurrency_limit=8).launch(server_name="0.0.0.0", server_port=7860, favicon_path=favicon_file())
