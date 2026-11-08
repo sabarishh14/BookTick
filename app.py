@@ -196,12 +196,6 @@ def date_is_past(date_str):
         return False
 
 
-def date_choices(days=21):
-    today = now_ist().date()
-    dates = [str(today + timedelta(days=i)) for i in range(days)]
-    return [(date_label(d), d) for d in dates]
-
-
 def normalize_date(value):
     """Accept YYYY-MM-DD (or DD-MM-YYYY / DD/MM/YYYY). Returns None if invalid."""
     value = (value or "").strip()
@@ -474,7 +468,7 @@ def city_choices():
 
 
 def load_city_cinemas(city):
-    """Read District's 'cinemas in <city>' page: each cinema's link, address and movies."""
+    """Read District's 'cinemas in <city>' page: each cinema's link and movies."""
     page = fetch_html(f"https://www.district.in/movies/cinemas-in-{city}")
     rails = dig(next_data(page), "props", "pageProps", "data", "serverState", "EDSResponse", "rails") or []
     links = {cid: path for path, cid in re.findall(r"(/movies/[a-z0-9-]+-CD(\d+))", page)}
@@ -489,8 +483,6 @@ def load_city_cinemas(city):
             cinemas[cid] = {
                 "id": cid,
                 "name": name,
-                "address": info.get("address") or "",
-                "amenities": list(info.get("amenities") or info.get("attributes") or []),
                 # District takes the cinema's display name from the link, so prefer its own links.
                 "url": "https://www.district.in" + links.get(cid, f"/movies/{slugify(name)}-CD{cid}"),
                 "movies": list(dict.fromkeys(m for m in movies if m)),
@@ -777,6 +769,9 @@ ICONS = {
     "film": '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 3v18M17 3v18M3 7.5h4M3 12h18M3 16.5h4M17 7.5h4M17 16.5h4"/>',
     "pin": '<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/>',
     "calendar": '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+    "chevron-down": '<path d="m6 9 6 6 6-6"/>',
+    "chevron-left": '<path d="m15 18-6-6 6-6"/>',
+    "chevron-right": '<path d="m9 18 6-6-6-6"/>',
     "clock": '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
     "activity": '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
     "eye": '<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
@@ -843,6 +838,34 @@ def step_head(badge, title, sub):
 
 def watcher_title(task):
     return task.get("movie_filter") or "Any movie"
+
+
+def date_picker_html(value):
+    """The show-date field: a button that opens a month calendar.
+
+    The page script (BookTick.date in HEAD) draws the days and writes the picked date
+    into a hidden textbox (#bt-date), which is what the Python handlers read.
+    """
+    weekdays = "".join(f"<span>{d}</span>" for d in ("Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"))
+    return f"""
+<div class="bt-date">
+  <span class="bt-field-label" id="bt-date-label">Show date</span>
+  <span class="bt-field-info">Show times are in IST.</span>
+  <button type="button" class="bt-date-trigger" aria-haspopup="dialog" aria-expanded="false"
+          aria-labelledby="bt-date-label bt-date-value">
+    {icon("calendar")}<span class="bt-date-value" id="bt-date-value">{esc(date_label(value))}</span>{icon("chevron-down")}
+  </button>
+  <div class="bt-cal" role="dialog" aria-label="Choose a show date" hidden>
+    <div class="bt-cal-head">
+      <button type="button" class="bt-cal-nav" data-cal-nav="-1" aria-label="Previous month">{icon("chevron-left")}</button>
+      <b class="bt-cal-title" aria-live="polite"></b>
+      <button type="button" class="bt-cal-nav" data-cal-nav="1" aria-label="Next month">{icon("chevron-right")}</button>
+    </div>
+    <div class="bt-cal-week" aria-hidden="true">{weekdays}</div>
+    <div class="bt-cal-days"></div>
+    <div class="bt-cal-quick"></div>
+  </div>
+</div>"""
 
 
 # ---------------------------------------------------------------------------
@@ -1171,16 +1194,15 @@ def hint(text):
 
 
 def cinema_card(cinema):
+    """One line under the cinema picker: how many movies it's showing, and a link to it on District."""
     if not cinema:
         return ""
     href = safe_href(cinema["url"])
     link = (f'<a class="bt-cinema-link" href="{href}" target="_blank" rel="noopener noreferrer">'
             f'Open on District{icon("external")}</a>') if href else ""
-    amenities = "".join(f'<span class="bt-tag">{esc(a)}</span>' for a in cinema["amenities"][:6])
-    showing = plural(len(cinema["movies"]), "movie") + " showing now" if cinema["movies"] else "Nothing showing right now"
-    return (f'<div class="bt-cinema"><div class="bt-cinema-top">{icon("pin")}<div><b>{esc(cinema["address"] or cinema["name"])}</b>'
-            f'<small>{showing}</small></div>{link}</div>'
-            + (f'<div class="bt-tags">{amenities}</div>' if amenities else "") + "</div>")
+    count = len(cinema["movies"])
+    showing = f"<b>{plural(count, 'movie')}</b> showing now" if count else "Nothing showing right now"
+    return f'<div class="bt-cinema">{icon("film")}<span>{showing}</span>{link}</div>'
 
 
 def movie_update(cinemas, cinema, picked):
@@ -1257,7 +1279,7 @@ def preview_shows(cin_url, movie_names, fmt_val, date_val):
         return callout("err", "Which cinema?", NO_CINEMA_HELP)
     date = normalize_date(date_val)
     if not date:
-        return callout("err", "Check the date", "It should look like 2026-11-20.")
+        return callout("err", "Pick a show date", "Choose a day from the calendar.")
     try:
         cinema_name, shows = parse_district_shows(query_url(url, date))
     except Exception as e:
@@ -1323,7 +1345,7 @@ def add_new_watcher(user_name, cin_url, movie_names, fmt_val, date_val, max_aler
         return callout("err", "Which cinema?", NO_CINEMA_HELP), keep, keep
     date = normalize_date(date_val)
     if not date:
-        return callout("err", "Check the date", "It should look like 2026-11-20."), keep, keep
+        return callout("err", "Pick a show date", "Choose a day from the calendar."), keep, keep
     channels, error = clean_channels(ntfy_top, tg_tok, tg_chat, disc_url)
     if error:
         return callout("err", "Where should we alert you?", error), keep, keep
@@ -1479,7 +1501,7 @@ def poll_status():
 
 def on_page_load():
     return (
-        gr.update(choices=date_choices(), value=today_ist()),
+        today_ist(),
         gr.update(value=app_state["interval_sec"]),
         watchers_html(),
         status_html(),
@@ -1578,7 +1600,10 @@ CSS = """
   --bt-done: #4f46e5; --bt-done-bg: #ecebfe; --bt-hot: #d4361c; --bt-hot-bg: #ffebe5;
   --bt-err: #c81e3a; --bt-err-bg: #ffe8ec; --bt-info: #2563eb; --bt-info-bg: #e8f0fe;
   --bt-shadow: 0 1px 2px rgba(18, 19, 42, .05), 0 10px 28px -16px rgba(18, 19, 42, .18);
+  --bt-pop-shadow: 0 2px 6px rgba(18, 19, 42, .06), 0 20px 44px -18px rgba(18, 19, 42, .4);
   --bt-radius: 18px;
+  --bt-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  --bt-check: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E");
 }
 .dark {
   --bt-surface: #151624; --bt-surface-2: #1c1d2e; --bt-line: #2a2b40; --bt-text: #ececf4; --bt-muted: #9a9cb5;
@@ -1587,6 +1612,7 @@ CSS = """
   --bt-done: #a5b4fc; --bt-done-bg: rgba(129, 140, 248, .16); --bt-hot: #ff8a6e; --bt-hot-bg: rgba(249, 87, 58, .15);
   --bt-err: #fb7185; --bt-err-bg: rgba(244, 63, 94, .14); --bt-info: #93c5fd; --bt-info-bg: rgba(96, 165, 250, .14);
   --bt-shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 12px 30px -18px rgba(0, 0, 0, .7);
+  --bt-pop-shadow: 0 2px 6px rgba(0, 0, 0, .3), 0 22px 48px -16px rgba(0, 0, 0, .8);
 }
 
 .gradio-container { max-width: 1200px !important; margin: 0 auto !important; }
@@ -1672,17 +1698,106 @@ CSS = """
   background: transparent; color: var(--bt-muted); font-weight: 650; font-size: .86rem; }
 #bt-channel-tabs > .tab-nav button.selected { background: var(--bt-surface); color: var(--bt-text); box-shadow: 0 1px 3px rgba(18, 19, 42, .14); }
 #bt-channel-tabs > .tabitem { padding: 12px 0 0 !important; border: none !important; background: transparent !important; }
-.bt-cinema { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border-radius: 14px;
-  background: var(--bt-surface-2); border: 1px solid var(--bt-line); }
-.bt-cinema-top { display: flex; align-items: flex-start; gap: 10px; font-size: .85rem; }
-.bt-cinema-top > .bt-i { font-size: 16px; margin-top: 2px; color: var(--bt-brand); }
-.bt-cinema-top b { display: block; font-weight: 600; color: var(--bt-text); line-height: 1.4; }
-.bt-cinema-top small { display: block; margin-top: 2px; font-size: .78rem; color: var(--bt-muted); }
+.bt-cinema { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 12px;
+  background: var(--bt-surface-2); border: 1px solid var(--bt-line); font-size: .85rem; color: var(--bt-muted); }
+.bt-cinema > .bt-i { font-size: 16px; color: var(--bt-brand); }
+.bt-cinema b { font-weight: 700; color: var(--bt-text); }
 .bt-cinema-link { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; flex: none; white-space: nowrap;
   color: var(--bt-brand) !important; font-weight: 700; font-size: .8rem; text-decoration: none !important; }
 .bt-cinema-link:hover { text-decoration: underline !important; }
-.bt-cinema .bt-tag { font-weight: 600; font-size: .74rem; }
-#bt-city input, #bt-cinema-pick input { padding-right: 28px !important; text-overflow: ellipsis; }
+
+/* ---------- dropdowns (Gradio's, restyled) ---------- */
+/* .wrap:has(> .wrap-inner) is the input box; a plain .wrap would also catch Gradio's loading overlay. */
+.bt-dd .wrap:has(> .wrap-inner) { border-color: var(--input-border-color) !important; transition: border-color .15s, box-shadow .15s; }
+.bt-dd .wrap:has(> .wrap-inner):hover { border-color: color-mix(in srgb, var(--bt-text) 24%, var(--input-border-color)) !important; }
+.bt-dd .wrap:has(> .wrap-inner):focus-within { border-color: var(--input-border-color-focus) !important; box-shadow: var(--input-shadow-focus) !important; }
+.bt-dd .wrap-inner { min-height: 44px; padding: 4px 8px 4px 12px !important; gap: 6px !important; }
+.bt-dd .secondary-wrap input { margin: 0 !important; padding: 6px 0 !important; font-weight: 500; text-overflow: ellipsis; }
+.bt-dd .secondary-wrap input::placeholder { color: var(--bt-muted); font-weight: 400; }
+.bt-dd:not(#bt-movie) input { padding-right: 40px !important; }
+/* Gradio's filled triangle, swapped for the same chevron as the date picker. It's drawn on
+   ::before so turning it doesn't fight the transform Gradio uses to centre the icon. */
+.bt-dd .icon-wrap { width: 20px !important; height: 20px; margin-right: 2px !important; color: var(--bt-muted) !important; transition: color .15s; }
+.bt-dd .icon-wrap svg { display: none; }
+.bt-dd .icon-wrap::before { content: ""; display: block; width: 100%; height: 100%; background: currentColor; transition: transform .2s ease;
+  -webkit-mask: var(--bt-chevron) center / 18px no-repeat; mask: var(--bt-chevron) center / 18px no-repeat; }
+.bt-dd .wrap:hover .icon-wrap { color: var(--bt-text) !important; }
+/* Gradio only renders the option list while it's open. */
+.bt-dd:has(ul.options) .icon-wrap { color: var(--bt-brand) !important; }
+.bt-dd:has(ul.options) .icon-wrap::before { transform: rotate(180deg); }
+.bt-dd ul.options { margin: 6px 0 !important; padding: 6px !important; border: 1px solid var(--bt-line) !important;
+  border-radius: 14px !important; background: var(--bt-surface) !important; box-shadow: var(--bt-pop-shadow) !important;
+  scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--bt-muted) 40%, transparent) transparent; }
+.bt-dd ul.options li.item { align-items: center; gap: 10px; margin: 0 0 2px !important; padding: 9px 10px !important;
+  border-radius: 9px; color: var(--bt-text); font-size: .9rem; line-height: 1.35; transition: background .1s; }
+.bt-dd ul.options li.item:last-child { margin-bottom: 0 !important; }
+.bt-dd ul.options li.item:hover, .bt-dd ul.options li.item.active { background: var(--bt-surface-2) !important; }
+.bt-dd ul.options li.item.selected { background: var(--bt-hot-bg) !important; color: var(--bt-hot); font-weight: 650; }
+/* Gradio's "✓" sits before the text; this turns it into a check mark at the end of the row. */
+.bt-dd ul.options .inner-item { order: 2; flex: none; margin-left: auto; padding: 0 !important; width: 16px; height: 16px;
+  font-size: 0; background: currentColor; -webkit-mask: var(--bt-check) center / 16px no-repeat; mask: var(--bt-check) center / 16px no-repeat; }
+.bt-dd ul.options .inner-item.hide { display: none; }
+.bt-dd .token { gap: 2px; padding: 3px 4px 3px 11px !important; border: none !important; border-radius: 999px !important;
+  background: var(--bt-hot-bg) !important; color: var(--bt-hot) !important; box-shadow: none !important;
+  font-size: .84rem !important; font-weight: 650 !important; line-height: 1.5 !important; }
+.bt-dd .token > * + * { margin-left: 0 !important; }
+.bt-dd .token-remove { width: 20px !important; height: 20px !important; padding: 5px !important; border: none !important;
+  background: transparent !important; fill: currentColor !important; opacity: .7; transition: background .15s, opacity .15s; }
+.bt-dd .token-remove:hover { opacity: 1; background: color-mix(in srgb, currentColor 16%, transparent) !important; }
+.bt-dd .token-remove.remove-all { width: 24px !important; height: 24px !important; padding: 6px !important; fill: var(--bt-muted) !important; opacity: 1; }
+.bt-dd .token-remove.remove-all:hover { fill: var(--bt-text) !important; background: rgba(127, 127, 160, .16) !important; }
+
+/* ---------- show-date calendar ---------- */
+.bt-date { position: relative; display: flex; flex-direction: column; }
+.bt-field-label { display: block; margin-bottom: var(--spacing-xs); color: var(--block-title-text-color);
+  font-weight: var(--block-title-text-weight); font-size: var(--block-title-text-size); line-height: var(--line-sm); }
+.bt-field-info { display: block; margin-bottom: var(--spacing-lg); color: var(--block-info-text-color);
+  font-weight: var(--block-info-text-weight); font-size: var(--block-info-text-size); line-height: var(--line-sm); }
+.bt-date-trigger { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; margin: 0; padding: 0 10px 0 12px;
+  border: var(--input-border-width) solid var(--input-border-color); border-radius: var(--input-radius);
+  background: var(--input-background-fill); color: var(--body-text-color); font: inherit; font-size: var(--input-text-size);
+  text-align: left; cursor: pointer; transition: border-color .15s, box-shadow .15s; }
+.bt-date-trigger:hover { border-color: color-mix(in srgb, var(--bt-text) 24%, var(--input-border-color)); }
+.bt-date-trigger:focus-visible, .bt-date.is-open .bt-date-trigger { outline: none; border-color: var(--input-border-color-focus);
+  box-shadow: var(--input-shadow-focus); }
+.bt-date-trigger > .bt-i { font-size: 18px; color: var(--bt-brand); }
+.bt-date-trigger > .bt-i:last-child { color: var(--bt-muted); transition: rotate .2s ease, color .15s; }
+.bt-date-trigger:hover > .bt-i:last-child { color: var(--bt-text); }
+.bt-date.is-open .bt-date-trigger > .bt-i:last-child { rotate: 180deg; color: var(--bt-brand); }
+.bt-date-value { flex: 1; min-width: 0; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bt-cal { position: absolute; top: calc(100% + 6px); left: 0; z-index: 60; width: 100%; min-width: 288px;
+  max-width: min(360px, calc(100vw - 32px)); padding: 12px;
+  border-radius: 16px; border: 1px solid var(--bt-line); background: var(--bt-surface); box-shadow: var(--bt-pop-shadow);
+  animation: bt-pop .14s ease; }
+.bt-cal.is-right { left: auto; right: 0; }
+.bt-cal[hidden] { display: none !important; }
+.bt-cal-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.bt-cal-title { font-size: .95rem; font-weight: 750; letter-spacing: -.01em; color: var(--bt-text); }
+.bt-cal-nav { width: 34px; height: 34px; display: grid; place-items: center; margin: 0; padding: 0; border-radius: 10px;
+  border: 1px solid var(--bt-line); background: var(--bt-surface); color: var(--bt-text); cursor: pointer;
+  transition: background .15s, border-color .15s, color .15s; }
+.bt-cal-nav .bt-i { font-size: 17px; }
+.bt-cal-nav:hover:not(:disabled) { background: var(--bt-surface-2); border-color: var(--bt-brand); color: var(--bt-brand); }
+.bt-cal-nav:disabled { opacity: .35; cursor: default; }
+.bt-cal-week, .bt-cal-days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; }
+.bt-cal-week span { padding: 6px 0; text-align: center; font-size: .7rem; font-weight: 700; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--bt-muted); }
+.bt-day { position: relative; height: 38px; margin: 0; padding: 0; border: none; border-radius: 10px; background: transparent;
+  color: var(--bt-text); font: inherit; font-size: .88rem; font-weight: 600; font-variant-numeric: tabular-nums; cursor: pointer;
+  transition: background .12s, color .12s; }
+.bt-day:hover:not(:disabled):not(.is-selected) { background: var(--bt-hot-bg); color: var(--bt-hot); }
+.bt-day:disabled { color: var(--bt-muted); opacity: .4; cursor: default; }
+.bt-day.is-today { color: var(--bt-brand); font-weight: 800; }
+.bt-day.is-today::after { content: ""; position: absolute; left: 50%; bottom: 5px; width: 4px; height: 4px; margin-left: -2px;
+  border-radius: 50%; background: currentColor; }
+.bt-day.is-selected { background: var(--bt-grad); color: #fff; font-weight: 750; box-shadow: 0 6px 14px -8px rgba(244, 63, 122, .9); }
+.bt-day:focus-visible, .bt-cal-nav:focus-visible, .bt-cal-chip:focus-visible, .bt-date-trigger:focus-visible { outline: 2px solid var(--bt-brand); outline-offset: 1px; }
+.bt-cal-quick { display: flex; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--bt-line); }
+.bt-cal-chip { flex: 1 1 0; min-width: 0; height: 32px; margin: 0; padding: 0 8px; border-radius: 999px; border: 1px solid var(--bt-line);
+  background: var(--bt-surface-2); color: var(--bt-text); font: inherit; font-size: .78rem; font-weight: 650; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; cursor: pointer; transition: background .15s, border-color .15s, color .15s; }
+.bt-cal-chip:hover { border-color: var(--bt-brand); color: var(--bt-brand); }
+.bt-cal-chip.is-selected { background: var(--bt-on-bg); border-color: var(--bt-on-bg); color: var(--bt-on-fg); }
 .bt-hint-line { display: flex; align-items: center; gap: 8px; font-size: .84rem; color: var(--bt-muted); }
 .bt-hint-line .bt-i { font-size: 15px; color: var(--bt-info); }
 .bt-hint-line b { color: var(--bt-text); }
@@ -1933,9 +2048,7 @@ a.bt-show:hover { border-color: var(--bt-brand); transform: translateY(-1px); bo
   .bt-stat-value { font-size: 1.15rem; }
   .bt-mini { position: static; flex-basis: 100%; justify-content: center; }
   .bt-stat-sub { white-space: normal; }
-  .bt-cinema-top { flex-wrap: wrap; }
-  .bt-cinema-top > div { flex: 1 1 calc(100% - 30px); }
-  .bt-cinema-link { margin-left: 26px; }
+  .bt-cinema { flex-wrap: wrap; }
   #bt-tabs > .tab-nav, #bt-channel-tabs > .tab-nav { flex-wrap: nowrap; }
   #bt-tabs > .tab-nav { width: 100%; }
   #bt-tabs > .tab-nav button { flex: 1 1 auto; padding: 8px 6px; font-size: .84rem; }
@@ -1950,6 +2063,199 @@ a.bt-show:hover { border-color: var(--bt-brand); transform: translateY(-1px); bo
 """
 
 FAVICON = "data:image/svg+xml," + quote(logo_svg("fav", "x"))
+
+# The show-date calendar (markup from date_picker_html). A plain string, not part of the
+# f-string below, so its braces don't need doubling.
+DATE_PICKER_JS = r"""
+<script>
+(() => {
+  // The picked date lives in the hidden #bt-date textbox, which the Python handlers read.
+  // Dates are "YYYY-MM-DD" strings handled as UTC calendar days, so the browser's own
+  // timezone never shifts them, and "today" always means today in India.
+  const BT = window.BookTick;
+  if (!BT || BT.date) return;
+  const MONTHS = ["January", "February", "March", "April", "May", "June", "July",
+                  "August", "September", "October", "November", "December"];
+  const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const MONTHS_AHEAD = 12;
+
+  const pad = (n) => String(n).padStart(2, "0");
+  const toIso = (d) => d.getUTCFullYear() + "-" + pad(d.getUTCMonth() + 1) + "-" + pad(d.getUTCDate());
+  const fromIso = (s) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || "").trim());
+    return m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])) : null;
+  };
+  const today = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);  // IST is UTC+5:30
+  const addDays = (s, n) => { const d = fromIso(s); d.setUTCDate(d.getUTCDate() + n); return toIso(d); };
+  const monthOf = (s) => s.slice(0, 7);
+  const addMonths = (ym, n) => toIso(new Date(Date.UTC(+ym.slice(0, 4), +ym.slice(5, 7) - 1 + n, 1))).slice(0, 7);
+  const daysIn = (ym) => new Date(Date.UTC(+ym.slice(0, 4), +ym.slice(5, 7), 0)).getUTCDate();
+  const short = (s) => {
+    const d = fromIso(s);
+    return DAYS[d.getUTCDay()].slice(0, 3) + " " + pad(d.getUTCDate()) + " " + MONTHS[d.getUTCMonth()].slice(0, 3);
+  };
+  // Same wording as date_label() in Python.
+  const label = (s) => {
+    const t = today();
+    if (s === t) return "Today · " + short(s);
+    if (s === addDays(t, 1)) return "Tomorrow · " + short(s);
+    return short(s);
+  };
+
+  const field = () => document.querySelector("#bt-date input, #bt-date textarea");
+  const picked = () => {
+    const el = field();
+    return el && fromIso(el.value) ? el.value.trim() : today();
+  };
+  const showLabel = (root, s) => {
+    const out = root.querySelector(".bt-date-value");
+    if (out) out.textContent = label(s);
+  };
+
+  const render = (root, focus) => {
+    const cal = root.querySelector(".bt-cal");
+    const t = today(), sel = picked(), ym = cal.dataset.month;
+    const lead = fromIso(ym + "-01").getUTCDay();
+    const count = daysIn(ym);
+    const name = MONTHS[+ym.slice(5, 7) - 1] + " " + ym.slice(0, 4);
+    // The one day reachable with Tab; arrow keys move from there.
+    const target = [focus, sel, t, ym + "-01"].find((s) => s && monthOf(s) === ym && s >= t);
+    cal.querySelector(".bt-cal-title").textContent = name;
+    cal.querySelector('[data-cal-nav="-1"]').disabled = ym <= monthOf(t);
+    cal.querySelector('[data-cal-nav="1"]').disabled = ym >= addMonths(monthOf(t), MONTHS_AHEAD);
+
+    let html = "";
+    for (let i = 0; i < Math.ceil((lead + count) / 7) * 7; i++) {
+      const n = i - lead + 1;
+      if (n < 1 || n > count) { html += "<span></span>"; continue; }
+      const s = ym + "-" + pad(n);
+      const cls = "bt-day" + (s === t ? " is-today" : "") + (s === sel ? " is-selected" : "");
+      html += '<button type="button" class="' + cls + '" data-date="' + s + '" tabindex="' + (s === target ? 0 : -1) + '"' +
+        ' aria-pressed="' + (s === sel) + '"' + (s === t ? ' aria-current="date"' : "") + (s < t ? " disabled" : "") +
+        ' aria-label="' + DAYS[i % 7] + " " + n + " " + name + '">' + n + "</button>";
+    }
+    cal.querySelector(".bt-cal-days").innerHTML = html;
+
+    // Shortcuts: today, tomorrow, and the next Friday (when new movies usually release).
+    let k = (5 - fromIso(t).getUTCDay() + 7) % 7;
+    if (k < 2) k += 7;
+    const quick = [["Today", t, ""], ["Tomorrow", addDays(t, 1), ""],
+                   [short(addDays(t, k)), addDays(t, k), "Next Friday, when new movies usually release"]];
+    cal.querySelector(".bt-cal-quick").innerHTML = quick.map(([text, s, title]) =>
+      '<button type="button" class="bt-cal-chip' + (s === sel ? " is-selected" : "") + '" data-cal-pick="' + s + '"' +
+      (title ? ' title="' + title + '"' : "") + ">" + text + "</button>").join("");
+  };
+
+  const focusDay = (root) => {
+    const day = root.querySelector('.bt-day[tabindex="0"]');
+    if (day) day.focus({ preventScroll: true });
+  };
+  const open = (root) => {
+    const cal = root.querySelector(".bt-cal");
+    const t = today(), sel = picked();
+    cal.dataset.month = monthOf(sel < t ? t : sel);
+    render(root);
+    cal.classList.remove("is-right");
+    cal.hidden = false;
+    root.classList.add("is-open");
+    root.querySelector(".bt-date-trigger").setAttribute("aria-expanded", "true");
+    if (cal.getBoundingClientRect().right > document.documentElement.clientWidth - 8) cal.classList.add("is-right");
+    focusDay(root);
+  };
+  const close = (root, refocus) => {
+    const cal = root.querySelector(".bt-cal");
+    if (!cal || cal.hidden) return;
+    cal.hidden = true;
+    root.classList.remove("is-open");
+    const trigger = root.querySelector(".bt-date-trigger");
+    trigger.setAttribute("aria-expanded", "false");
+    if (refocus) trigger.focus();
+  };
+  const choose = (root, s) => {
+    const el = field();
+    if (el) {
+      el.value = s;
+      el.dispatchEvent(new Event("input", { bubbles: true }));  // tells Gradio the value changed
+    }
+    showLabel(root, s);
+    close(root, true);
+  };
+  const moveTo = (root, s) => {
+    const t = today();
+    if (s < t) s = t;
+    if (monthOf(s) > addMonths(monthOf(t), MONTHS_AHEAD)) return;
+    root.querySelector(".bt-cal").dataset.month = monthOf(s);
+    render(root, s);
+    focusDay(root);
+  };
+
+  BT.date = {
+    sync: (s) => {
+      document.querySelectorAll(".bt-date").forEach((root) => {
+        showLabel(root, fromIso(s) ? String(s).trim() : today());
+        if (root.classList.contains("is-open")) render(root);
+      });
+      return [];
+    },
+  };
+
+  document.addEventListener("click", (e) => {
+    const t = e.target instanceof Element ? e.target : null;
+    const root = t && t.closest(".bt-date");
+    document.querySelectorAll(".bt-date.is-open").forEach((r) => { if (r !== root) close(r); });
+    if (!root) return;
+    if (t.closest(".bt-date-trigger")) {
+      if (root.classList.contains("is-open")) close(root); else open(root);
+      return;
+    }
+    const nav = t.closest("[data-cal-nav]");
+    if (nav) {
+      if (!nav.disabled) {
+        const cal = root.querySelector(".bt-cal");
+        cal.dataset.month = addMonths(cal.dataset.month, +nav.getAttribute("data-cal-nav"));
+        render(root);
+      }
+      return;
+    }
+    const pick = t.closest("[data-cal-pick], .bt-day");
+    if (pick && !pick.disabled) choose(root, pick.getAttribute("data-cal-pick") || pick.getAttribute("data-date"));
+  });
+
+  document.addEventListener("keydown", (e) => {
+    const t = e.target instanceof Element ? e.target : null;
+    const root = t && t.closest(".bt-date");
+    if (!root) return;
+    if (e.key === "Escape" && root.classList.contains("is-open")) {
+      e.preventDefault();
+      close(root, true);
+      return;
+    }
+    if (e.key === "ArrowDown" && t.closest(".bt-date-trigger") && !root.classList.contains("is-open")) {
+      e.preventDefault();
+      open(root);
+      return;
+    }
+    const day = t.closest(".bt-day");
+    if (!day) return;
+    const s = day.getAttribute("data-date");
+    const step = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 }[e.key];
+    if (step) {
+      e.preventDefault();
+      moveTo(root, addDays(s, step));
+    } else if (e.key === "PageUp" || e.key === "PageDown") {
+      e.preventDefault();
+      const ym = addMonths(monthOf(s), e.key === "PageUp" ? -1 : 1);
+      moveTo(root, ym + "-" + pad(Math.min(+s.slice(8), daysIn(ym))));
+    }
+  });
+
+  // Tabbing out of the calendar closes it.
+  document.addEventListener("focusin", (e) => {
+    document.querySelectorAll(".bt-date.is-open").forEach((r) => { if (!r.contains(e.target)) close(r); });
+  });
+})();
+</script>
+"""
 
 HEAD = f"""
 <link rel="icon" type="image/svg+xml" href="{FAVICON}">
@@ -2090,6 +2396,7 @@ HEAD = f"""
   }});
 }})();
 </script>
+{DATE_PICKER_JS}
 """
 
 
@@ -2122,27 +2429,27 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
                         with gr.Row():
                             city_input = gr.Dropdown(
                                 label="City", choices=[(city_label(DEFAULT_CITY), DEFAULT_CITY)], value=DEFAULT_CITY,
-                                info="Type to search 790+ cities.", scale=2, min_width=180, elem_id="bt-city",
+                                info="Type to search 790+ cities.", scale=2, min_width=180, elem_id="bt-city", elem_classes="bt-dd",
                             )
                             cinema_input = gr.Dropdown(
                                 label="Cinema", choices=[(DEFAULT_CINEMA_LABEL, DEFAULT_URL)], value=DEFAULT_URL,
                                 info="Type part of the name or the area.", scale=3, min_width=240, elem_id="bt-cinema-pick",
+                                elem_classes="bt-dd",
                             )
                         cinema_info = gr.HTML(elem_classes="bt-root-html")
                         movie_filter_input = gr.Dropdown(
-                            label="Movie", choices=["Ramayana"], value=["Ramayana"], multiselect=True, allow_custom_value=True, elem_id="bt-movie",
+                            label="Movie", choices=["Ramayana"], value=["Ramayana"], multiselect=True, allow_custom_value=True,
+                            elem_id="bt-movie", elem_classes="bt-dd",
                             info="Movies at this cinema come first, then the rest of the city. Not listed yet? "
                                  "Type the name and press Enter. Part of a name is enough.",
                         )
                         with gr.Row():
                             format_filter_input = gr.Dropdown(
                                 label="Format", choices=FORMAT_CHOICES, value="IMAX", allow_custom_value=True,
-                                info="Pick one or type your own.", min_width=160,
+                                info="Pick one or type your own.", min_width=160, elem_classes="bt-dd",
                             )
-                            target_date_input = gr.Dropdown(
-                                label="Show date", choices=date_choices(), value=today_ist(), allow_custom_value=True,
-                                info="Or type a date like 2026-11-20.", min_width=200,
-                            )
+                            with gr.Column(min_width=200):
+                                gr.HTML(date_picker_html(today_ist()), elem_classes="bt-root-html")
                         with gr.Accordion("Or paste a cinema link", open=False, elem_classes="bt-accordion") as link_accordion:
                             cin_url_input = gr.Textbox(
                                 label="Cinema page on District",
@@ -2215,7 +2522,11 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
 
     gr.HTML(footer_html(), elem_classes="bt-root-html")
 
-    # Hidden bridge for the buttons rendered inside HTML (see BookTick.send in HEAD).
+    # Hidden bridges for the widgets rendered inside HTML (see BookTick in HEAD): the
+    # date picked in the calendar, and the buttons on the watcher cards.
+    target_date_input = gr.Textbox(
+        value=today_ist(), elem_id="bt-date", elem_classes="bt-hidden", show_label=False, container=False, max_lines=1,
+    )
     action_box = gr.Textbox(elem_id="bt-action", elem_classes="bt-hidden", show_label=False, container=False)
     action_btn = gr.Button("Run action", elem_id="bt-action-btn", elem_classes="bt-hidden")
 
@@ -2257,6 +2568,9 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
         show_progress="hidden",
         trigger_mode="multiple",
     )
+    # Python sets the date too (on page load), so keep the calendar's button text in step.
+    target_date_input.change(None, inputs=[target_date_input],
+                             js="(v) => (window.BookTick && window.BookTick.date ? window.BookTick.date.sync(v) : [])")
     watchers_tab.select(watchers_html, outputs=[watchers_box], show_progress="hidden")
     activity_tab.select(logs_html, outputs=[log_box], show_progress="hidden")
 
