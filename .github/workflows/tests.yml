@@ -1,0 +1,40 @@
+name: Tests
+
+# Unit tests on every push. Once a day it also checks District's live pages still parse,
+# so a District redesign shows up here (and in your email) instead of as missed alerts.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  schedule:
+    - cron: "30 3 * * *"  # 9:00 AM IST
+  workflow_dispatch:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Install
+        run: pip install "requests>=2.31.0"
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
+  live:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Install
+        run: pip install "requests>=2.31.0"
+      - name: Check District's live pages
+        env:
+          BOOKTICK_LIVE: "1"
+        run: python -m unittest tests.test_live -v

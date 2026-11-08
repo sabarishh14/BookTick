@@ -8,6 +8,7 @@ on:
       - main
     paths:
       - 'app.py'
+      - 'booktick/**'
       - 'requirements.txt'
       - 'README.md'
   workflow_dispatch:
@@ -29,8 +30,12 @@ jobs:
           git clone https://sabarishhh14:${HF_TOKEN}@huggingface.co/spaces/sabarishhh14/BookTick hf-space
 
           # 2. Copy the app files into the Space
-          # (Only these files, so anything that exists only on the Space is left alone)
+          # (Only these files, so anything that exists only on the Space is left alone.
+          # The booktick/ folder is replaced whole, so deleted modules don't linger.)
           cp app.py requirements.txt README.md hf-space/
+          rm -rf hf-space/booktick
+          cp -r booktick hf-space/
+          find hf-space/booktick -name "__pycache__" -type d -prune -exec rm -rf {} +
 
           # 3. Commit and push the changes back to Hugging Face
           cd hf-space
