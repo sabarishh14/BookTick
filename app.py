@@ -769,6 +769,8 @@ ICONS = {
     "film": '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 3v18M17 3v18M3 7.5h4M3 12h18M3 16.5h4M17 7.5h4M17 16.5h4"/>',
     "pin": '<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/>',
     "calendar": '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+    "sun": '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>',
+    "moon": '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
     "chevron-down": '<path d="m6 9 6 6 6-6"/>',
     "chevron-left": '<path d="m15 18-6-6 6-6"/>',
     "chevron-right": '<path d="m9 18 6-6-6-6"/>',
@@ -794,8 +796,8 @@ GITHUB_MARK = (
 )
 
 
-def icon(name):
-    return f'<svg class="bt-i" viewBox="0 0 24 24" aria-hidden="true">{ICONS[name]}</svg>'
+def icon(name, cls=""):
+    return f'<svg class="bt-i{" " + cls if cls else ""}" viewBox="0 0 24 24" aria-hidden="true">{ICONS[name]}</svg>'
 
 
 def logo_svg(uid, cls="bt-logo"):
@@ -881,11 +883,16 @@ def header_html():
       <p class="bt-tagline">{APP_TAGLINE}</p>
     </div>
   </div>
-  <a class="bt-gh" href="{GITHUB_URL}" target="_blank" rel="noopener noreferrer" title="{AUTHOR_NAME} on GitHub">
-    <img src="{GITHUB_AVATAR}" alt="" width="36" height="36">
-    <span class="bt-gh-text"><small>Made by</small><b>{AUTHOR_NAME}</b></span>
-    {GITHUB_MARK}
-  </a>
+  <div class="bt-hero-side">
+    <button type="button" class="bt-theme" data-bt-theme aria-label="Switch between light and dark mode" title="Light / dark mode">
+      {icon("moon", "bt-i-moon")}{icon("sun", "bt-i-sun")}
+    </button>
+    <a class="bt-gh" href="{GITHUB_URL}" target="_blank" rel="noopener noreferrer" title="{AUTHOR_NAME} on GitHub">
+      <img src="{GITHUB_AVATAR}" alt="" width="36" height="36">
+      <span class="bt-gh-text"><small>Made by</small><b>{AUTHOR_NAME}</b></span>
+      {GITHUB_MARK}
+    </a>
+  </div>
 </header>"""
 
 
@@ -1559,14 +1566,20 @@ theme = gr.themes.Soft(
     block_info_text_color_dark="#9a9cb5",
     input_background_fill="#f7f7fb",
     input_background_fill_dark="#1c1d2e",
+    # A crisp 1px edge on every input, so focus reads as a sharp brand outline with a faint
+    # halo instead of a soft blur (the Soft theme has no input border at all).
+    input_border_width="1px",
+    input_border_width_dark="1px",
     input_border_color="#e3e3ec",
-    input_border_color_dark="#30314a",
+    input_border_color_dark="#2c2d44",
+    input_border_color_hover="#cdcedc",
+    input_border_color_hover_dark="#3d3e5a",
     input_border_color_focus="#f9573a",
-    input_border_color_focus_dark="#f9573a",
+    input_border_color_focus_dark="#ff6b4a",
     input_shadow="none",
     input_shadow_dark="none",
-    input_shadow_focus="0 0 0 3px rgba(249, 87, 58, .18)",
-    input_shadow_focus_dark="0 0 0 3px rgba(249, 87, 58, .25)",
+    input_shadow_focus="0 0 0 3px rgba(249, 87, 58, .12)",
+    input_shadow_focus_dark="0 0 0 3px rgba(255, 107, 74, .16)",
     button_large_radius="12px",
     button_small_radius="10px",
     button_primary_background_fill=GRADIENT,
@@ -1600,7 +1613,8 @@ CSS = """
   --bt-done: #4f46e5; --bt-done-bg: #ecebfe; --bt-hot: #d4361c; --bt-hot-bg: #ffebe5;
   --bt-err: #c81e3a; --bt-err-bg: #ffe8ec; --bt-info: #2563eb; --bt-info-bg: #e8f0fe;
   --bt-shadow: 0 1px 2px rgba(18, 19, 42, .05), 0 10px 28px -16px rgba(18, 19, 42, .18);
-  --bt-pop-shadow: 0 2px 6px rgba(18, 19, 42, .06), 0 20px 44px -18px rgba(18, 19, 42, .4);
+  --bt-pop-bg: #ffffff; --bt-pop-line: #e6e6ef; --bt-hover: #f3f3f8; --bt-chip-bg: #ffffff; --bt-scroll: #cfd0dc;
+  --bt-pop-shadow: 0 1px 2px rgba(18, 19, 42, .05), 0 12px 32px -8px rgba(18, 19, 42, .18);
   --bt-radius: 18px;
   --bt-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   --bt-check: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E");
@@ -1612,7 +1626,8 @@ CSS = """
   --bt-done: #a5b4fc; --bt-done-bg: rgba(129, 140, 248, .16); --bt-hot: #ff8a6e; --bt-hot-bg: rgba(249, 87, 58, .15);
   --bt-err: #fb7185; --bt-err-bg: rgba(244, 63, 94, .14); --bt-info: #93c5fd; --bt-info-bg: rgba(96, 165, 250, .14);
   --bt-shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 12px 30px -18px rgba(0, 0, 0, .7);
-  --bt-pop-shadow: 0 2px 6px rgba(0, 0, 0, .3), 0 22px 48px -16px rgba(0, 0, 0, .8);
+  --bt-pop-bg: #1b1c2d; --bt-pop-line: #2c2d44; --bt-hover: rgba(255, 255, 255, .06); --bt-chip-bg: #24253a; --bt-scroll: #3d3e5a;
+  --bt-pop-shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 16px 40px -10px rgba(0, 0, 0, .75);
 }
 
 .gradio-container { max-width: 1200px !important; margin: 0 auto !important; }
@@ -1645,6 +1660,15 @@ CSS = """
 .bt-gh-text small { font-size: .66rem; letter-spacing: .09em; text-transform: uppercase; color: rgba(255, 255, 255, .6); }
 .bt-gh-text b { font-size: .92rem; font-weight: 700; color: #fff; }
 .bt-gh-mark { width: 20px; height: 20px; flex: none; opacity: .9; }
+.bt-hero-side { position: relative; z-index: 1; display: flex; align-items: center; gap: 10px; }
+.bt-theme { width: 48px; height: 48px; flex: none; display: grid; place-items: center; margin: 0; padding: 0; border-radius: 50%;
+  background: rgba(255, 255, 255, .08); border: 1px solid rgba(255, 255, 255, .16); color: #fff; cursor: pointer;
+  transition: background .2s, border-color .2s; }
+.bt-theme:hover { background: rgba(255, 255, 255, .15); border-color: rgba(255, 255, 255, .3); }
+.bt-theme:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.bt-theme .bt-i { font-size: 19px; }
+.bt-theme .bt-i-sun, .dark .bt-theme .bt-i-moon { display: none; }
+.dark .bt-theme .bt-i-sun { display: block; }
 
 /* ---------- stats ---------- */
 .bt-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
@@ -1709,43 +1733,51 @@ CSS = """
 /* ---------- dropdowns (Gradio's, restyled) ---------- */
 /* .wrap:has(> .wrap-inner) is the input box; a plain .wrap would also catch Gradio's loading overlay. */
 .bt-dd .wrap:has(> .wrap-inner) { border-color: var(--input-border-color) !important; transition: border-color .15s, box-shadow .15s; }
-.bt-dd .wrap:has(> .wrap-inner):hover { border-color: color-mix(in srgb, var(--bt-text) 24%, var(--input-border-color)) !important; }
+.bt-dd .wrap:has(> .wrap-inner):hover { border-color: var(--input-border-color-hover) !important; }
 .bt-dd .wrap:has(> .wrap-inner):focus-within { border-color: var(--input-border-color-focus) !important; box-shadow: var(--input-shadow-focus) !important; }
-.bt-dd .wrap-inner { min-height: 44px; padding: 4px 8px 4px 12px !important; gap: 6px !important; }
-.bt-dd .secondary-wrap input { margin: 0 !important; padding: 6px 0 !important; font-weight: 500; text-overflow: ellipsis; }
-.bt-dd .secondary-wrap input::placeholder { color: var(--bt-muted); font-weight: 400; }
+.bt-dd .wrap-inner { min-height: 42px; padding: 3px 8px 3px 12px !important; gap: 6px !important; }
+.bt-dd .secondary-wrap input { margin: 0 !important; padding: 6px 0 !important; text-overflow: ellipsis; }
+.bt-dd .secondary-wrap input::placeholder { color: var(--bt-muted); }
 .bt-dd:not(#bt-movie) input { padding-right: 40px !important; }
 /* Gradio's filled triangle, swapped for the same chevron as the date picker. It's drawn on
    ::before so turning it doesn't fight the transform Gradio uses to centre the icon. */
 .bt-dd .icon-wrap { width: 20px !important; height: 20px; margin-right: 2px !important; color: var(--bt-muted) !important; transition: color .15s; }
 .bt-dd .icon-wrap svg { display: none; }
 .bt-dd .icon-wrap::before { content: ""; display: block; width: 100%; height: 100%; background: currentColor; transition: transform .2s ease;
-  -webkit-mask: var(--bt-chevron) center / 18px no-repeat; mask: var(--bt-chevron) center / 18px no-repeat; }
+  -webkit-mask: var(--bt-chevron) center / 16px no-repeat; mask: var(--bt-chevron) center / 16px no-repeat; }
 .bt-dd .wrap:hover .icon-wrap { color: var(--bt-text) !important; }
 /* Gradio only renders the option list while it's open. */
-.bt-dd:has(ul.options) .icon-wrap { color: var(--bt-brand) !important; }
+.bt-dd:has(ul.options) .icon-wrap { color: var(--bt-text) !important; }
 .bt-dd:has(ul.options) .icon-wrap::before { transform: rotate(180deg); }
-.bt-dd ul.options { margin: 6px 0 !important; padding: 6px !important; border: 1px solid var(--bt-line) !important;
-  border-radius: 14px !important; background: var(--bt-surface) !important; box-shadow: var(--bt-pop-shadow) !important;
-  scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--bt-muted) 40%, transparent) transparent; }
-.bt-dd ul.options li.item { align-items: center; gap: 10px; margin: 0 0 2px !important; padding: 9px 10px !important;
-  border-radius: 9px; color: var(--bt-text); font-size: .9rem; line-height: 1.35; transition: background .1s; }
-.bt-dd ul.options li.item:last-child { margin-bottom: 0 !important; }
-.bt-dd ul.options li.item:hover, .bt-dd ul.options li.item.active { background: var(--bt-surface-2) !important; }
-.bt-dd ul.options li.item.selected { background: var(--bt-hot-bg) !important; color: var(--bt-hot); font-weight: 650; }
+
+/* The open list: 12px panel, 4px inset, 8px rows, so the corners nest. Rows stay neutral;
+   the picked one is marked only by weight and a brand check. */
+.bt-dd ul.options { margin: 6px 0 !important; padding: 4px !important; border: 1px solid var(--bt-pop-line) !important;
+  border-radius: 12px !important; background: var(--bt-pop-bg) !important; box-shadow: var(--bt-pop-shadow) !important; }
+.bt-dd ul.options li.item { align-items: center; gap: 10px; margin: 0 !important; padding: 8px 10px !important; border-radius: 8px;
+  color: var(--bt-text); font-size: .875rem; line-height: 1.4; }
+.bt-dd ul.options li.item:hover, .bt-dd ul.options li.item.active { background: var(--bt-hover) !important; }
+.bt-dd ul.options li.item.selected { font-weight: 600; }
 /* Gradio's "✓" sits before the text; this turns it into a check mark at the end of the row. */
-.bt-dd ul.options .inner-item { order: 2; flex: none; margin-left: auto; padding: 0 !important; width: 16px; height: 16px;
-  font-size: 0; background: currentColor; -webkit-mask: var(--bt-check) center / 16px no-repeat; mask: var(--bt-check) center / 16px no-repeat; }
+.bt-dd ul.options .inner-item { order: 2; flex: none; margin-left: auto; padding: 0 !important; width: 14px; height: 14px;
+  font-size: 0; color: var(--bt-brand); background: currentColor;
+  -webkit-mask: var(--bt-check) center / 14px no-repeat; mask: var(--bt-check) center / 14px no-repeat; }
 .bt-dd ul.options .inner-item.hide { display: none; }
-.bt-dd .token { gap: 2px; padding: 3px 4px 3px 11px !important; border: none !important; border-radius: 999px !important;
-  background: var(--bt-hot-bg) !important; color: var(--bt-hot) !important; box-shadow: none !important;
-  font-size: .84rem !important; font-weight: 650 !important; line-height: 1.5 !important; }
+.bt-dd ul.options::-webkit-scrollbar, .bt-cal::-webkit-scrollbar { width: 12px; }
+.bt-dd ul.options::-webkit-scrollbar-track { margin: 6px 0; background: transparent; }
+.bt-dd ul.options::-webkit-scrollbar-thumb { border: 4px solid transparent; border-radius: 999px; background: var(--bt-scroll) padding-box; }
+.bt-dd ul.options::-webkit-scrollbar-thumb:hover { background-color: var(--bt-muted); }
+@supports not selector(::-webkit-scrollbar) {
+  .bt-dd ul.options { scrollbar-width: thin; scrollbar-color: var(--bt-scroll) transparent; }
+}
+.bt-dd .token { gap: 2px; padding: 2px 3px 2px 9px !important; border: 1px solid var(--bt-pop-line) !important; border-radius: 7px !important;
+  background: var(--bt-chip-bg) !important; color: var(--bt-text) !important; box-shadow: 0 1px 1px rgba(18, 19, 42, .04) !important;
+  font-size: .82rem !important; font-weight: 600 !important; line-height: 1.5 !important; }
 .bt-dd .token > * + * { margin-left: 0 !important; }
-.bt-dd .token-remove { width: 20px !important; height: 20px !important; padding: 5px !important; border: none !important;
-  background: transparent !important; fill: currentColor !important; opacity: .7; transition: background .15s, opacity .15s; }
-.bt-dd .token-remove:hover { opacity: 1; background: color-mix(in srgb, currentColor 16%, transparent) !important; }
-.bt-dd .token-remove.remove-all { width: 24px !important; height: 24px !important; padding: 6px !important; fill: var(--bt-muted) !important; opacity: 1; }
-.bt-dd .token-remove.remove-all:hover { fill: var(--bt-text) !important; background: rgba(127, 127, 160, .16) !important; }
+.bt-dd .token-remove { width: 18px !important; height: 18px !important; padding: 4px !important; border: none !important; border-radius: 5px !important;
+  background: transparent !important; fill: var(--bt-muted) !important; transition: background .15s, fill .15s; }
+.bt-dd .token-remove:hover { fill: var(--bt-text) !important; background: var(--bt-hover) !important; }
+.bt-dd .token-remove.remove-all { width: 22px !important; height: 22px !important; padding: 6px !important; border-radius: 6px !important; }
 
 /* ---------- show-date calendar ---------- */
 .bt-date { position: relative; display: flex; flex-direction: column; }
@@ -1757,47 +1789,46 @@ CSS = """
   border: var(--input-border-width) solid var(--input-border-color); border-radius: var(--input-radius);
   background: var(--input-background-fill); color: var(--body-text-color); font: inherit; font-size: var(--input-text-size);
   text-align: left; cursor: pointer; transition: border-color .15s, box-shadow .15s; }
-.bt-date-trigger:hover { border-color: color-mix(in srgb, var(--bt-text) 24%, var(--input-border-color)); }
+.bt-date-trigger:hover { border-color: var(--input-border-color-hover); }
 .bt-date-trigger:focus-visible, .bt-date.is-open .bt-date-trigger { outline: none; border-color: var(--input-border-color-focus);
   box-shadow: var(--input-shadow-focus); }
-.bt-date-trigger > .bt-i { font-size: 18px; color: var(--bt-brand); }
-.bt-date-trigger > .bt-i:last-child { color: var(--bt-muted); transition: rotate .2s ease, color .15s; }
-.bt-date-trigger:hover > .bt-i:last-child { color: var(--bt-text); }
-.bt-date.is-open .bt-date-trigger > .bt-i:last-child { rotate: 180deg; color: var(--bt-brand); }
-.bt-date-value { flex: 1; min-width: 0; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.bt-cal { position: absolute; top: calc(100% + 6px); left: 0; z-index: 60; width: 100%; min-width: 288px;
-  max-width: min(360px, calc(100vw - 32px)); padding: 12px;
-  border-radius: 16px; border: 1px solid var(--bt-line); background: var(--bt-surface); box-shadow: var(--bt-pop-shadow);
-  animation: bt-pop .14s ease; }
+.bt-date-trigger > .bt-i { font-size: 17px; color: var(--bt-muted); }
+.bt-date-trigger > .bt-i:last-child { font-size: 16px; transition: rotate .2s ease, color .15s; }
+.bt-date-trigger:hover > .bt-i:last-child, .bt-date.is-open .bt-date-trigger > .bt-i:last-child { color: var(--bt-text); }
+.bt-date.is-open .bt-date-trigger > .bt-i:last-child { rotate: 180deg; }
+.bt-date-value { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bt-cal { position: absolute; top: calc(100% + 6px); left: 0; z-index: 60; width: 100%; min-width: 280px;
+  max-width: min(340px, calc(100vw - 32px)); padding: 10px; border-radius: 12px; border: 1px solid var(--bt-pop-line);
+  background: var(--bt-pop-bg); box-shadow: var(--bt-pop-shadow); animation: bt-pop .14s ease; }
 .bt-cal.is-right { left: auto; right: 0; }
 .bt-cal[hidden] { display: none !important; }
-.bt-cal-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
-.bt-cal-title { font-size: .95rem; font-weight: 750; letter-spacing: -.01em; color: var(--bt-text); }
-.bt-cal-nav { width: 34px; height: 34px; display: grid; place-items: center; margin: 0; padding: 0; border-radius: 10px;
-  border: 1px solid var(--bt-line); background: var(--bt-surface); color: var(--bt-text); cursor: pointer;
-  transition: background .15s, border-color .15s, color .15s; }
-.bt-cal-nav .bt-i { font-size: 17px; }
-.bt-cal-nav:hover:not(:disabled) { background: var(--bt-surface-2); border-color: var(--bt-brand); color: var(--bt-brand); }
-.bt-cal-nav:disabled { opacity: .35; cursor: default; }
+.bt-cal-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.bt-cal-title { font-size: .9rem; font-weight: 600; color: var(--bt-text); }
+.bt-cal-nav { width: 30px; height: 30px; display: grid; place-items: center; margin: 0; padding: 0; border: none; border-radius: 8px;
+  background: transparent; color: var(--bt-muted); cursor: pointer; transition: background .15s, color .15s; }
+.bt-cal-nav .bt-i { font-size: 16px; }
+.bt-cal-nav:hover:not(:disabled) { background: var(--bt-hover); color: var(--bt-text); }
+.bt-cal-nav:disabled { opacity: .3; cursor: default; }
 .bt-cal-week, .bt-cal-days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; }
-.bt-cal-week span { padding: 6px 0; text-align: center; font-size: .7rem; font-weight: 700; letter-spacing: .04em;
+.bt-cal-week span { padding: 6px 0; text-align: center; font-size: .68rem; font-weight: 600; letter-spacing: .04em;
   text-transform: uppercase; color: var(--bt-muted); }
-.bt-day { position: relative; height: 38px; margin: 0; padding: 0; border: none; border-radius: 10px; background: transparent;
-  color: var(--bt-text); font: inherit; font-size: .88rem; font-weight: 600; font-variant-numeric: tabular-nums; cursor: pointer;
+.bt-day { position: relative; height: 36px; margin: 0; padding: 0; border: none; border-radius: 8px; background: transparent;
+  color: var(--bt-text); font: inherit; font-size: .85rem; font-variant-numeric: tabular-nums; cursor: pointer;
   transition: background .12s, color .12s; }
-.bt-day:hover:not(:disabled):not(.is-selected) { background: var(--bt-hot-bg); color: var(--bt-hot); }
-.bt-day:disabled { color: var(--bt-muted); opacity: .4; cursor: default; }
-.bt-day.is-today { color: var(--bt-brand); font-weight: 800; }
-.bt-day.is-today::after { content: ""; position: absolute; left: 50%; bottom: 5px; width: 4px; height: 4px; margin-left: -2px;
+.bt-day:hover:not(:disabled):not(.is-selected) { background: var(--bt-hover); }
+.bt-day:disabled { color: var(--bt-muted); opacity: .45; cursor: default; }
+.bt-day.is-today { color: var(--bt-brand); font-weight: 600; }
+.bt-day.is-today::after { content: ""; position: absolute; left: 50%; bottom: 5px; width: 3px; height: 3px; margin-left: -1.5px;
   border-radius: 50%; background: currentColor; }
-.bt-day.is-selected { background: var(--bt-grad); color: #fff; font-weight: 750; box-shadow: 0 6px 14px -8px rgba(244, 63, 122, .9); }
-.bt-day:focus-visible, .bt-cal-nav:focus-visible, .bt-cal-chip:focus-visible, .bt-date-trigger:focus-visible { outline: 2px solid var(--bt-brand); outline-offset: 1px; }
-.bt-cal-quick { display: flex; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--bt-line); }
-.bt-cal-chip { flex: 1 1 0; min-width: 0; height: 32px; margin: 0; padding: 0 8px; border-radius: 999px; border: 1px solid var(--bt-line);
-  background: var(--bt-surface-2); color: var(--bt-text); font: inherit; font-size: .78rem; font-weight: 650; white-space: nowrap;
+.bt-day.is-selected { background: var(--bt-brand); color: #fff; font-weight: 600; }
+.bt-day:focus-visible, .bt-cal-nav:focus-visible, .bt-cal-chip:focus-visible { outline: 2px solid var(--bt-brand); outline-offset: 1px; }
+.bt-cal-quick { display: flex; gap: 6px; margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--bt-pop-line); }
+.bt-cal-chip { flex: 1 1 0; min-width: 0; height: 30px; margin: 0; padding: 0 8px; border-radius: 8px; border: 1px solid var(--bt-pop-line);
+  background: transparent; color: var(--bt-text); font: inherit; font-size: .78rem; font-weight: 600; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; cursor: pointer; transition: background .15s, border-color .15s, color .15s; }
-.bt-cal-chip:hover { border-color: var(--bt-brand); color: var(--bt-brand); }
-.bt-cal-chip.is-selected { background: var(--bt-on-bg); border-color: var(--bt-on-bg); color: var(--bt-on-fg); }
+.bt-cal-chip:hover { background: var(--bt-hover); }
+.bt-cal-chip.is-selected { border-color: color-mix(in srgb, var(--bt-brand) 50%, transparent); color: var(--bt-brand);
+  background: color-mix(in srgb, var(--bt-brand) 7%, transparent); }
 .bt-hint-line { display: flex; align-items: center; gap: 8px; font-size: .84rem; color: var(--bt-muted); }
 .bt-hint-line .bt-i { font-size: 15px; color: var(--bt-info); }
 .bt-hint-line b { color: var(--bt-text); }
@@ -2063,6 +2094,37 @@ a.bt-show:hover { border-color: var(--bt-brand); transform: translateY(-1px); bo
 """
 
 FAVICON = "data:image/svg+xml," + quote(logo_svg("fav", "x"))
+
+# The light/dark switch in the header. Gradio picks the theme itself when the page loads
+# (and again when the system theme changes), so a saved choice is re-applied on top of it.
+THEME_JS = r"""
+<script>
+(() => {
+  if (window.__btTheme) return;
+  window.__btTheme = true;
+  const KEY = "booktick-theme";
+  const saved = () => { try { return localStorage.getItem(KEY); } catch (e) { return null; } };
+  const apply = () => {
+    const mode = saved();
+    if (!document.body || (mode !== "dark" && mode !== "light")) return;
+    const dark = mode === "dark";
+    if (document.body.classList.contains("dark") !== dark) document.body.classList.toggle("dark", dark);
+  };
+  const watch = () => {
+    apply();
+    new MutationObserver(apply).observe(document.body, { attributes: true, attributeFilter: ["class"] });
+  };
+  if (document.body) watch(); else document.addEventListener("DOMContentLoaded", watch);
+  document.addEventListener("click", (e) => {
+    const t = e.target instanceof Element ? e.target : null;
+    if (!t || !t.closest("[data-bt-theme]")) return;
+    const next = document.body.classList.contains("dark") ? "light" : "dark";
+    try { localStorage.setItem(KEY, next); } catch (err) {}
+    document.body.classList.toggle("dark", next === "dark");
+  });
+})();
+</script>
+"""
 
 # The show-date calendar (markup from date_picker_html). A plain string, not part of the
 # f-string below, so its braces don't need doubling.
@@ -2396,6 +2458,7 @@ HEAD = f"""
   }});
 }})();
 </script>
+{THEME_JS}
 {DATE_PICKER_JS}
 """
 
