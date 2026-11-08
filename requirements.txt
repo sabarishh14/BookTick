@@ -1,0 +1,4 @@
+huggingface_hub<0.25.0
+starlette<0.38.0
+requests>=2.31.0
+beautifulsoup4>=4.12.0
