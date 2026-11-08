@@ -847,6 +847,45 @@ def watcher_title(task):
     return task.get("movie_filter") or "Any movie"
 
 
+# --- Loading placeholders -----------------------------------------------------
+# Shown until the page-load calls fill in the real content, so the boxes never sit there
+# with stale numbers from when the server started.
+def skel(width, cls=""):
+    return f'<span class="bt-skel{" " + cls if cls else ""}" style="width:{width}"></span>'
+
+
+def status_skeleton():
+    tile = (f'<div class="bt-stat">{skel("40px", "bt-skel-icon")}<div class="bt-stat-body">'
+            f'{skel("44%", "bt-skel-label")}{skel("58%", "bt-skel-value")}{skel("76%", "bt-skel-sub")}</div></div>')
+    return f'<div class="bt-stats bt-loading" aria-busy="true" aria-label="Loading">{tile * 4}</div>'
+
+
+def watchers_skeleton():
+    card = (
+        '<div class="bt-card bt-loading">'
+        f'<div class="bt-card-head">{skel("84px", "bt-skel-pill")}{skel("64px")}</div>'
+        f'<div>{skel("72%", "bt-skel-title")}{skel("54%")}</div>'
+        f'<div class="bt-tags">{skel("74px", "bt-skel-tag")}{skel("96px", "bt-skel-tag")}</div>'
+        f'{skel("100%", "bt-skel-block")}'
+        f'<div class="bt-actions">{skel("auto", "bt-skel-btn bt-skel-grow")}{skel("72px", "bt-skel-btn")}{skel("80px", "bt-skel-btn")}</div>'
+        "</div>"
+    )
+    chips = "".join(skel(w, "bt-skel-chip") for w in ("64px", "100px", "88px", "92px"))
+    return (f'<div class="bt-watchers" aria-busy="true" aria-label="Loading watchers">'
+            f'<div class="bt-toolbar"><div class="bt-chips">{chips}</div></div>'
+            f'<div class="bt-grid">{card * 3}</div></div>')
+
+
+def cinema_skeleton():
+    return (f'<div class="bt-cinema bt-loading" aria-busy="true" aria-label="Loading cinemas">'
+            f'{skel("16px", "bt-skel-dot")}{skel("150px")}{skel("110px", "bt-skel-end")}</div>')
+
+
+def logs_skeleton():
+    rows = "".join(f'<li class="bt-log-row">{skel("96px")}{skel(w)}</li>' for w in ("62%", "48%", "70%", "40%", "56%", "66%"))
+    return f'<ol class="bt-log-list bt-loading" aria-busy="true" aria-label="Loading activity">{rows}</ol>'
+
+
 def date_picker_html(value):
     """The show-date field: a button that opens a month calendar.
 
@@ -1619,6 +1658,7 @@ CSS = """
   --bt-err: #c81e3a; --bt-err-bg: #ffe8ec; --bt-info: #2563eb; --bt-info-bg: #e8f0fe;
   --bt-shadow: 0 1px 2px rgba(18, 19, 42, .05), 0 10px 28px -16px rgba(18, 19, 42, .18);
   --bt-pop-bg: #ffffff; --bt-pop-line: #e6e6ef; --bt-hover: #f3f3f8; --bt-chip-bg: #ffffff; --bt-scroll: #cfd0dc;
+  --bt-skel: #ececf3; --bt-skel-shine: rgba(255, 255, 255, .75);
   --bt-pop-shadow: 0 1px 2px rgba(18, 19, 42, .05), 0 12px 32px -8px rgba(18, 19, 42, .18);
   --bt-radius: 18px;
   --bt-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
@@ -1632,6 +1672,7 @@ CSS = """
   --bt-err: #fb7185; --bt-err-bg: rgba(244, 63, 94, .14); --bt-info: #93c5fd; --bt-info-bg: rgba(96, 165, 250, .14);
   --bt-shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 12px 30px -18px rgba(0, 0, 0, .7);
   --bt-pop-bg: #1b1c2d; --bt-pop-line: #2c2d44; --bt-hover: rgba(255, 255, 255, .06); --bt-chip-bg: #24253a; --bt-scroll: #3d3e5a;
+  --bt-skel: rgba(255, 255, 255, .06); --bt-skel-shine: rgba(255, 255, 255, .07);
   --bt-pop-shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 16px 40px -10px rgba(0, 0, 0, .75);
 }
 
@@ -1697,6 +1738,50 @@ CSS = """
   font: inherit; font-size: .76rem; font-weight: 700; cursor: pointer; transition: background .15s, border-color .15s; }
 .bt-mini:hover { border-color: var(--bt-brand); color: var(--bt-brand); }
 @keyframes bt-ring { 0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, .55); } 75%, 100% { box-shadow: 0 0 0 8px rgba(34, 197, 94, 0); } }
+
+/* ---------- loading placeholders ---------- */
+.bt-skel { position: relative; display: block; height: 10px; flex: none; border-radius: 6px; overflow: hidden; background: var(--bt-skel); }
+.bt-skel::after { content: ""; position: absolute; inset: 0; transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, var(--bt-skel-shine), transparent); animation: bt-shimmer 1.4s ease-in-out infinite; }
+@keyframes bt-shimmer { to { transform: translateX(100%); } }
+.bt-loading { pointer-events: none; }
+/* While a call runs, Gradio fades its HTML outputs to 20% and pads them to 96px tall. These
+   boxes show their own placeholders instead, so keep them as they are. */
+#bt-cinema-info .pending, #bt-log .pending { opacity: 1 !important; }
+#bt-cinema-info .prose.min, #bt-log .prose.min { min-height: 0 !important; }
+/* Sized so the real tile takes the same space when it arrives. */
+.bt-stat .bt-skel-icon { width: 40px; height: 40px; border-radius: 12px; }
+.bt-skel-label { margin: 3px 0 9px; }
+.bt-skel-value { height: 24px; margin: 0 0 9px; border-radius: 7px; }
+.bt-skel-sub { height: 9px; margin-bottom: 5px; }
+.bt-skel-chip { height: 34px; border-radius: 999px; }
+.bt-skel-pill { height: 24px; border-radius: 999px; }
+.bt-skel-title { height: 18px; margin-bottom: 10px; border-radius: 6px; }
+.bt-skel-tag { height: 24px; border-radius: 8px; }
+.bt-skel-block { height: 52px; border-radius: 12px; }
+.bt-skel-btn { height: 36px; border-radius: 10px; }
+.bt-skel-grow { flex: 1 1 auto; }
+.bt-cinema.bt-loading { min-height: 41px; }
+.bt-skel-dot { height: 16px; border-radius: 5px; }
+.bt-skel-end { margin-left: auto; }
+.bt-log-list.bt-loading .bt-log-row { align-items: center; padding: 11px 10px !important; }
+/* Pickers whose lists are still loading (.bt-dir): a spinner in place of the chevron, and no
+   input yet. Gradio re-writes this stylesheet, which mangles :is(a, b) lists and blanks out a
+   var() shorthand followed by a longhand, hence the plain class and the single border-color.
+   !important: like the html[data-bt-view] rules, these can't get Gradio's higher-specificity
+   copy, so the chevron rule's copy would otherwise win. */
+html.bt-booting .bt-dir .wrap:has(> .wrap-inner) { cursor: progress; }
+html.bt-booting .bt-dir .wrap-inner { pointer-events: none; }
+html.bt-booting .bt-dir .icon-wrap::before {
+  width: 14px !important; height: 14px !important; margin: 3px !important; box-sizing: border-box; border-radius: 50%;
+  background: none !important; -webkit-mask: none !important; mask: none !important;
+  border-width: 2px; border-style: solid; border-color: var(--bt-brand) var(--bt-line) var(--bt-line);
+  animation: bt-spin .7s linear infinite; }
+@keyframes bt-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .bt-skel::after { animation: none; }
+  html.bt-booting .bt-dir .icon-wrap::before { animation-duration: 2s; }
+}
 
 /* ---------- tabs ---------- */
 #bt-tabs { margin-top: 4px; }
@@ -2347,6 +2432,12 @@ HEAD = f"""
 (() => {{
   if (window.BookTick) return;
   const BT = (window.BookTick = {{ queue: [] }});
+
+  // Until the city, cinema and movie lists arrive, those pickers show a spinner and
+  // can't be changed (see .bt-booting in CSS), so an early pick isn't overwritten.
+  document.documentElement.classList.add("bt-booting");
+  BT.booted = () => {{ document.documentElement.classList.remove("bt-booting"); return []; }};
+  setTimeout(BT.booted, 20000);
   const TRASH = '<svg class="bt-i" viewBox="0 0 24 24" aria-hidden="true">{ICONS["trash"]}</svg>';
 
   // Buttons inside the HTML cards can't call Python directly. They queue
@@ -2501,7 +2592,7 @@ def live_region(region, html):
 
 with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=theme, css=CSS, head=HEAD) as demo:
     gr.HTML(header_html(), elem_classes="bt-root-html")
-    status_box = live_region("status", status_html())
+    status_box = live_region("status", status_skeleton())
 
     with gr.Tabs(elem_id="bt-tabs"):
         # --- New watcher -----------------------------------------------------
@@ -2513,17 +2604,18 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
                         with gr.Row():
                             city_input = gr.Dropdown(
                                 label="City", choices=[(city_label(DEFAULT_CITY), DEFAULT_CITY)], value=DEFAULT_CITY,
-                                info="Type to search 790+ cities.", scale=2, min_width=180, elem_id="bt-city", elem_classes="bt-dd",
+                                info="Type to search 790+ cities.", scale=2, min_width=180, elem_id="bt-city",
+                                elem_classes=["bt-dd", "bt-dir"],
                             )
                             cinema_input = gr.Dropdown(
                                 label="Cinema", choices=[(DEFAULT_CINEMA_LABEL, DEFAULT_URL)], value=DEFAULT_URL,
                                 info="Type part of the name or the area.", scale=3, min_width=240, elem_id="bt-cinema-pick",
-                                elem_classes="bt-dd",
+                                elem_classes=["bt-dd", "bt-dir"],
                             )
-                        cinema_info = gr.HTML(elem_classes="bt-root-html")
+                        cinema_info = gr.HTML(cinema_skeleton(), elem_id="bt-cinema-info", elem_classes="bt-root-html")
                         movie_filter_input = gr.Dropdown(
                             label="Movie", choices=["Ramayana"], value=["Ramayana"], multiselect=True, allow_custom_value=True,
-                            elem_id="bt-movie", elem_classes="bt-dd",
+                            elem_id="bt-movie", elem_classes=["bt-dd", "bt-dir"],
                             info="Movies at this cinema come first, then the rest of the city. Not listed yet? "
                                  "Type the name and press Enter. Part of a name is enough.",
                         )
@@ -2580,7 +2672,7 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
 
         # --- Watchers --------------------------------------------------------
         with gr.Tab("Watchers", id="watchers", elem_id="tab-watchers") as watchers_tab:
-            watchers_box = live_region("watchers", watchers_html())
+            watchers_box = live_region("watchers", watchers_skeleton())
 
         # --- Activity --------------------------------------------------------
         with gr.Tab("Activity", id="activity", elem_id="tab-activity") as activity_tab:
@@ -2588,7 +2680,7 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
                 gr.HTML('<div class="bt-section-title"><h3>Activity log</h3><p>Newest first: every check result, alert and change.</p></div>')
                 copy_log_btn = gr.Button("Copy log", size="sm", elem_id="bt-copy-log", scale=0, min_width=110)
                 clear_logs_btn = gr.Button("Clear log", size="sm", scale=0, min_width=110)
-            log_box = gr.HTML(logs_html(), elem_id="bt-log")
+            log_box = gr.HTML(logs_skeleton(), elem_id="bt-log")
 
         # --- Settings --------------------------------------------------------
         with gr.Tab("Settings", id="settings", elem_id="tab-settings"):
@@ -2675,7 +2767,7 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
         load_directory, inputs=[city_input, cin_url_input, movie_filter_input],
         outputs=[city_input, cinema_input, movie_filter_input, cinema_info],
         show_progress="hidden",
-    )
+    ).then(None, js="() => (window.BookTick ? window.BookTick.booted() : [])")  # runs even if loading failed
 
 # --- Launch -------------------------------------------------------------------
 start_engine()
