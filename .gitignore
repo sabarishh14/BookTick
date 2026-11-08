@@ -1,0 +1,5 @@
+__pycache__/
+
+# Saved watchers. They hold alert settings such as Telegram bot tokens and Discord webhooks.
+booktick_watchers.json*
+district_tasks.json*

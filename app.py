@@ -1,15 +1,27 @@
 import os
 import re
 import json
+import time
 import uuid
 import threading
 import urllib.request
 import html as html_lib
+from urllib.parse import urlparse, quote
 from datetime import datetime, timezone, timedelta
 
 import requests
-import pandas as pd
 import gradio as gr
+
+# ---------------------------------------------------------------------------
+# Brand
+# ---------------------------------------------------------------------------
+APP_NAME = "BookTick"
+APP_TAGLINE = "Get pinged the second tickets open for your movie on District."
+AUTHOR_NAME = "Sabarish SB"
+GITHUB_USER = "sabarishh14"
+GITHUB_URL = f"https://github.com/{GITHUB_USER}"
+GITHUB_AVATAR = f"https://github.com/{GITHUB_USER}.png?size=96"
+BRAND_DISCORD_COLOR = 0xF9573A
 
 # ---------------------------------------------------------------------------
 # Time: everything is shown in Indian Standard Time
@@ -46,7 +58,8 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Storage and shared state
 # ---------------------------------------------------------------------------
-TASKS_FILE = "district_tasks.json"
+TASKS_FILE = "booktick_watchers.json"
+LEGACY_TASKS_FILE = "district_tasks.json"  # file name used before the BookTick rename
 DEFAULT_URL = "https://www.district.in/movies/inox-phoenix-market-city-formerly-jazz-cinemas-velachery-chennai-CD1020779"
 FORMAT_CHOICES = ["ANY", "IMAX", "4DX", "3D", "2D"]
 MAX_LOG_LINES = 300
@@ -58,12 +71,13 @@ wake_engine = threading.Event()  # set it to make the engine check right away
 
 
 def load_tasks():
-    if os.path.exists(TASKS_FILE):
-        try:
-            with open(TASKS_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
+    for path in (TASKS_FILE, LEGACY_TASKS_FILE):
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                return {}
     return {}
 
 
@@ -135,18 +149,14 @@ def parse_time(value, naive_is_utc):
     return dt.astimezone(IST)
 
 
+def fmt_clock(dt):
+    return dt.strftime("%I:%M %p").lstrip("0")
+
+
 def fmt_when(dt):
     if not dt:
         return "Time unknown"
-    return dt.strftime("%a %d %b · ") + dt.strftime("%I:%M %p").lstrip("0")
-
-
-def fmt_seats(show):
-    if show["avail"] is None:
-        return "Open"
-    if show["total"]:
-        return f"{show['avail']} / {show['total']}"
-    return str(show["avail"])
+    return dt.strftime("%a %d %b · ") + fmt_clock(dt)
 
 
 def seats_text(show):
@@ -179,6 +189,13 @@ def date_label(date_str):
     return pretty
 
 
+def date_is_past(date_str):
+    try:
+        return datetime.strptime(date_str, "%Y-%m-%d").date() < now_ist().date()
+    except (TypeError, ValueError):
+        return False
+
+
 def date_choices(days=21):
     today = now_ist().date()
     dates = [str(today + timedelta(days=i)) for i in range(days)]
@@ -198,6 +215,17 @@ def normalize_date(value):
     return None
 
 
+def clean_cinema_url(value):
+    """Return a usable district.in link (adding https:// if it's missing), or None."""
+    url = (value or "").strip()
+    if url and not re.match(r"^https?://", url, re.I):
+        url = "https://" + url
+    host = (urlparse(url).hostname or "").lower()
+    if host == "district.in" or host.endswith(".district.in"):
+        return url
+    return None
+
+
 def cinema_name_from_url(url):
     slug = url.split("?")[0].rstrip("/").split("/")[-1]
     slug = re.sub(r"-CD\d+$", "", slug, flags=re.I)
@@ -207,6 +235,21 @@ def cinema_name_from_url(url):
 def shorten(text, limit):
     text = str(text or "")
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def ago(timestamp):
+    if not timestamp:
+        return ""
+    secs = max(0, int(time.time() - float(timestamp)))
+    if secs < 60:
+        return f"{secs}s ago"
+    if secs < 3600:
+        return f"{secs // 60}m ago"
+    return f"{secs // 3600}h ago"
+
+
+def plural(n, word):
+    return f"{n} {word}{'' if n == 1 else 's'}"
 
 
 # ---------------------------------------------------------------------------
@@ -406,7 +449,7 @@ def send_task_notification(task, shows, cinema_name, alert_idx=1, max_alerts=1, 
     formats = list(dict.fromkeys(str(s["format"]) for s in shows))
     movie = f"{' / '.join(titles)} ({', '.join(formats)})"
     counter = f"[{alert_idx}/{max_alerts}] " if max_alerts > 1 and not test else ""
-    headline = "🧪 Test alert from District Ticket Monitor" if test else f"🚨 {counter}Tickets open: {' / '.join(titles)}"
+    headline = f"🧪 Test alert from {APP_NAME}" if test else f"🚨 {counter}Tickets open: {' / '.join(titles)}"
     intro = "Your alerts work. A real alert will look like this:" if test else f"{len(shows)} matching show(s) have seats right now."
     lines = show_lines(shows)
     results = []
@@ -458,9 +501,9 @@ def send_task_notification(task, shows, cinema_name, alert_idx=1, max_alerts=1, 
         embed = {
             "title": headline,
             "url": first["url"],
-            "color": 0x6366F1 if test else 0xE11D48,
+            "color": 0x6366F1 if test else BRAND_DISCORD_COLOR,
             "description": "\n".join([intro, f"**{movie}**", cinema_name, ""] + lines),
-            "footer": {"text": "District Ticket Monitor"},
+            "footer": {"text": APP_NAME},
         }
         content = "🧪 Test alert" if test else "@everyone 🔥 Tickets are open!"
         try:
@@ -468,7 +511,8 @@ def send_task_notification(task, shows, cinema_name, alert_idx=1, max_alerts=1, 
             ok = res.status_code in (200, 204)
             results.append(("Discord", ok, "sent" if ok else response_error(res)))
         except Exception as e:
-            results.append(("Discord", False, redact(e, discord_url)))
+            # Error text can echo the webhook path, which contains its secret token.
+            results.append(("Discord", False, redact(e, discord_url, urlparse(discord_url).path)))
 
     return results
 
@@ -477,6 +521,16 @@ def describe_results(results):
     if not results:
         return "no alert channels set"
     return " · ".join(f"✅ {ch}" if ok else f"❌ {ch}: {detail}" for ch, ok, detail in results)
+
+
+def sample_shows(url):
+    """A made-up show used by test alerts."""
+    start = (now_ist() + timedelta(hours=3)).replace(minute=30, second=0, microsecond=0)
+    return [{
+        "title": "Test Movie", "format": "IMAX 3D", "start": start, "audi": "",
+        "avail": 120, "total": 200, "price": 450.0,
+        "url": url or "https://www.district.in",
+    }]
 
 
 # ---------------------------------------------------------------------------
@@ -494,6 +548,7 @@ def check_task(task, cinema_name, shows):
             return  # deleted or paused while this check was running
         task["cinema_name"] = cinema_name
         task["last_checked"] = now_ist().strftime("%H:%M:%S")
+        task["last_checked_ts"] = time.time()
 
         if not matching:
             result = f"No match · {len(listed)} shows listed" if listed else "No shows listed yet"
@@ -537,6 +592,7 @@ def run_sweep(active):
             with tasks_lock:
                 for t in group:
                     t["last_checked"] = now_ist().strftime("%H:%M:%S")
+                    t["last_checked_ts"] = time.time()
                     t["last_result"] = "⚠️ Page didn't load"
             add_log(f"⚠️ Couldn't load {cinema_name_from_url(url)}: {e}")
             continue
@@ -572,174 +628,489 @@ def start_engine():
 
 
 # ---------------------------------------------------------------------------
-# UI helpers
+# HTML building blocks
 # ---------------------------------------------------------------------------
-TABLE_HEADERS = ["Watcher", "Cinema", "Movie", "Format", "Date", "Alerts", "Last check (IST)", "Alerts via", "Status"]
-PREVIEW_HEADERS = ["Match", "Movie", "Format", "Showtime (IST)", "Seats left", "From"]
-STATUS_LABELS = {"Active": "🟢 Watching", "Paused": "⏸ Paused", "Done": "✅ Alerted"}
+# Watchers are shared by everyone who opens the Space, so anything a visitor typed
+# (names, movies, links) is escaped before it goes into HTML.
+esc = html_lib.escape
+
+ICONS = {
+    "check": '<path d="M20 6 9 17l-5-5"/>',
+    "alert": '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+    "info": '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
+    "zap": '<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>',
+    "pause": '<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>',
+    "play": '<path d="M6 3.5v17l14-8.5z"/>',
+    "rotate": '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
+    "trash": '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/>',
+    "bell": '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+    "send": '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
+    "film": '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 3v18M17 3v18M3 7.5h4M3 12h18M3 16.5h4M17 7.5h4M17 16.5h4"/>',
+    "pin": '<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/>',
+    "calendar": '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+    "clock": '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+    "activity": '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+    "eye": '<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
+    "user": '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+    "external": '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+    "plus": '<path d="M12 5v14M5 12h14"/>',
+    "ticket": '<path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2M13 17v2M13 11v2"/>',
+    "lock": '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+    "arrow": '<path d="M5 12h14M12 5l7 7-7 7"/>',
+    "seat": '<path d="M7 18v3M17 18v3"/><path d="M5 11V6a3 3 0 0 1 3-3h8a3 3 0 0 1 3 3v5"/><rect x="3" y="11" width="18" height="7" rx="2"/>',
+}
+
+GITHUB_MARK = (
+    '<svg class="bt-gh-mark" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0c4.42 0 8 3.58 8 8a8.013 '
+    "8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 "
+    "0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-"
+    "2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46"
+    ".21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3"
+    '.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/></svg>'
+)
 
 
-def channels_summary(task):
-    names = []
-    if task.get("ntfy_topic"):
-        names.append("ntfy")
-    if task.get("telegram_chat_id"):
-        names.append("Telegram")
-    if task.get("discord_webhook"):
-        names.append("Discord")
-    return " · ".join(names) or "None"
+def icon(name):
+    return f'<svg class="bt-i" viewBox="0 0 24 24" aria-hidden="true">{ICONS[name]}</svg>'
 
 
-def get_tasks_table():
-    with tasks_lock:
-        tasks = list(app_state["tasks"].values())
-    rows = []
-    for t in tasks:
-        last = f"{t.get('last_result', '')} · {t['last_checked']}" if t.get("last_checked") else "Waiting for first check"
-        rows.append([
-            t.get("user_label", ""),
-            shorten(t.get("cinema_name") or cinema_name_from_url(t.get("cinema_url", "")), 36),
-            t.get("movie_filter") or "Any movie",
-            t.get("format_filter", "ANY"),
-            date_label(t.get("target_date", "")),
-            f"{t.get('alert_count', 0)} / {t.get('max_alerts', 5)}",
-            last,
-            channels_summary(t),
-            STATUS_LABELS.get(t.get("status"), t.get("status", "")),
-        ])
-    return pd.DataFrame(rows, columns=TABLE_HEADERS)
+def logo_svg(uid, cls="bt-logo"):
+    """The BookTick mark: a ticket with a tick. `uid` keeps gradient ids unique on the page."""
+    g = f"btg-{uid}"
+    return (
+        f'<svg class="{cls}" viewBox="0 0 48 48" aria-hidden="true">'
+        f'<defs><linearGradient id="{g}" x1="0" y1="0" x2="1" y2="1">'
+        '<stop offset="0" stop-color="#FF6B4A"/><stop offset="1" stop-color="#F43F7A"/></linearGradient></defs>'
+        f'<rect width="48" height="48" rx="14" fill="url(#{g})"/>'
+        '<path d="M13 14h22a3 3 0 0 1 3 3v3a4 4 0 0 0 0 8v3a3 3 0 0 1-3 3H13a3 3 0 0 1-3-3v-3a4 4 0 0 0 0-8v-3a3 3 0 0 1 3-3Z" fill="#fff"/>'
+        f'<path d="M18 24.5l4 4 8-8.5" fill="none" stroke="url(#{g})" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>'
+        "</svg>"
+    )
 
 
-def watcher_choices():
-    with tasks_lock:
-        tasks = list(app_state["tasks"].items())
-    return [
-        (f"{t.get('user_label', 'Watcher')} · {t.get('movie_filter') or 'Any movie'} · "
-         f"{date_label(t.get('target_date', ''))} · {STATUS_LABELS.get(t.get('status'), '')}", tid)
-        for tid, t in tasks
-    ]
+def safe_href(url):
+    """Only plain web links go into href attributes."""
+    url = str(url or "").strip()
+    return esc(url, quote=True) if re.match(r"^https?://", url, re.I) else None
+
+
+def callout(tone, title, body=""):
+    """A coloured message box. `title` and `body` are HTML, so escape user text first."""
+    icon_name = {"ok": "check", "err": "alert", "warn": "alert", "info": "info", "hot": "zap"}[tone]
+    body_html = f'<div class="bt-callout-body">{body}</div>' if body else ""
+    return (f'<div class="bt-callout {tone}" role="status">{icon(icon_name)}'
+            f'<div><div class="bt-callout-title">{title}</div>{body_html}</div></div>')
+
+
+def toast(ok, text):
+    """Pop-up message. Gradio renders toasts as HTML, so the text is escaped here."""
+    (gr.Info if ok else gr.Warning)(esc(shorten(text, 240)))
+
+
+def step_head(badge, title, sub):
+    return (f'<div class="bt-step-head"><span class="bt-step-num">{badge}</span>'
+            f'<div><h3>{title}</h3><p>{sub}</p></div></div>')
+
+
+def watcher_title(task):
+    return task.get("movie_filter") or "Any movie"
+
+
+# ---------------------------------------------------------------------------
+# Page sections
+# ---------------------------------------------------------------------------
+def header_html():
+    return f"""
+<header class="bt-hero">
+  <div class="bt-brand">
+    {logo_svg("hero")}
+    <div>
+      <div class="bt-wordmark">Book<span>Tick</span></div>
+      <p class="bt-tagline">{APP_TAGLINE}</p>
+    </div>
+  </div>
+  <a class="bt-gh" href="{GITHUB_URL}" target="_blank" rel="noopener noreferrer" title="{AUTHOR_NAME} on GitHub">
+    <img src="{GITHUB_AVATAR}" alt="" width="36" height="36">
+    <span class="bt-gh-text"><small>Made by</small><b>{AUTHOR_NAME}</b></span>
+    {GITHUB_MARK}
+  </a>
+</header>"""
+
+
+def footer_html():
+    return f"""
+<div class="bt-footer">
+  <div class="bt-footer-brand">{logo_svg("foot", "bt-logo-sm")}<b>{APP_NAME}</b><span>Movie ticket alerts for District</span></div>
+  <div class="bt-footer-meta">
+    <a href="{GITHUB_URL}" target="_blank" rel="noopener noreferrer">
+      <img src="{GITHUB_AVATAR}" alt="" width="22" height="22">Built by {AUTHOR_NAME}</a>
+    <a href="{GITHUB_URL}" target="_blank" rel="noopener noreferrer">{GITHUB_MARK}@{GITHUB_USER}</a>
+  </div>
+  <p class="bt-footer-note">{APP_NAME} is an independent project and isn't affiliated with District or Zomato. All times are IST.</p>
+</div>"""
+
+
+HELP_HTML = f"""
+<aside class="bt-help">
+  <h3>How it works</h3>
+  <ol class="bt-steps">
+    <li><b>Find your cinema</b><span>Open it on <a href="https://www.district.in" target="_blank" rel="noopener noreferrer">district.in</a> and copy the link from the address bar.</span></li>
+    <li><b>Pick the movie, format and date</b><span>Tap <em>Preview shows</em> to see what's listed right now.</span></li>
+    <li><b>Choose where to get alerts</b><span>ntfy is quickest: install the app, subscribe to a topic, and enter the same topic here.</span></li>
+    <li><b>Send a test, then start watching</b><span>When a matching show has seats, you get the alerts you chose, each with a link straight to seat selection. Then the watcher stops; re-arm it from <em>Watchers</em>.</span></li>
+  </ol>
+  <h4>Good to know</h4>
+  <ul class="bt-tips">
+    <li>{icon("lock")}<span>Use a topic name nobody would guess, like <code>arun_tickets_982</code>. Anyone who knows it can read your alerts.</span></li>
+    <li>{icon("alert")}<span>Watchers are wiped when this Space restarts or goes to sleep after a long time without visitors. If you're waiting days, check back now and then.</span></li>
+    <li>{icon("clock")}<span>All times are Indian Standard Time.</span></li>
+  </ul>
+</aside>"""
+
+
+def about_html():
+    return f"""
+<div class="bt-about">
+  {logo_svg("about", "bt-logo-md")}
+  <h3>About {APP_NAME}</h3>
+  <p>{APP_NAME} keeps an eye on District cinema pages and pings your phone the moment seats open for the show you want.</p>
+  <a class="bt-gh-card" href="{GITHUB_URL}" target="_blank" rel="noopener noreferrer">
+    <img src="{GITHUB_AVATAR}" alt="" width="44" height="44">
+    <span><b>{AUTHOR_NAME}</b><small>github.com/{GITHUB_USER}</small></span>
+    {GITHUB_MARK}
+  </a>
+</div>"""
 
 
 def status_html():
     with tasks_lock:
         tasks = list(app_state["tasks"].values())
     watching = sum(1 for t in tasks if t.get("status") == "Active")
-    alerts = sum(int(t.get("alert_count", 0)) for t in tasks)
+    alerts = sum(to_int(t.get("alert_count")) or 0 for t in tasks)
     running = not app_state["paused"]
     last = app_state["last_check_time"]
     if last:
-        last_value = last.strftime("%I:%M:%S %p").lstrip("0")
-        last_sub = f"IST · {int((now_ist() - last).total_seconds())}s ago"
+        last_value, last_sub = fmt_clock(last), f"IST · {ago(last.timestamp())}"
     else:
-        last_value, last_sub = "—", "no checks yet"
-    dot = '<span class="dot on"></span>Running' if running else '<span class="dot off"></span>Paused'
-    cards = [
-        ("Engine", dot, f"every {app_state['interval_sec']}s · {app_state['check_count']} checks"),
-        ("Watching", str(watching), f"{len(tasks)} watcher(s) in total"),
-        ("Alerts sent", str(alerts), "across all watchers"),
-        ("Last check", last_value, last_sub),
+        last_value, last_sub = "—", "No checks yet"
+
+    engine_value = (f'<span class="bt-live {"on" if running else "off"}"></span>'
+                    f'{"Running" if running else "Paused"}')
+    toggle = (f'<button type="button" class="bt-mini" data-bt-action="engine" '
+              f'title="{"Pause" if running else "Resume"} checking for every watcher">'
+              f'{icon("pause" if running else "play")}{"Pause" if running else "Resume"}</button>')
+    tiles = [
+        ("activity", "brand", "Engine", engine_value,
+         f"Every {app_state['interval_sec']}s · {plural(app_state['check_count'], 'check')}", toggle),
+        ("eye", "ok", "Watching", str(watching), f"{plural(len(tasks), 'watcher')} in total", ""),
+        ("bell", "hot", "Alerts sent", str(alerts), "Across all watchers", ""),
+        ("clock", "info", "Last check", last_value, last_sub, ""),
     ]
     body = "".join(
-        f'<div class="stat-card"><div class="stat-label">{label}</div>'
-        f'<div class="stat-value">{value}</div><div class="stat-sub">{sub}</div></div>'
-        for label, value, sub in cards
+        f'<div class="bt-stat"><div class="bt-stat-icon tone-{tone}">{icon(ic)}</div>'
+        f'<div class="bt-stat-body"><div class="bt-stat-label">{label}</div>'
+        f'<div class="bt-stat-value">{value}</div><div class="bt-stat-sub">{sub}</div></div>{extra}</div>'
+        for ic, tone, label, value, sub, extra in tiles
     )
-    return f'<div class="stat-row">{body}</div>'
+    return f'<div class="bt-stats">{body}</div>'
 
 
-def logs_text():
+# --- Watcher cards ------------------------------------------------------------
+STATUS_META = {"Active": ("Watching", "active"), "Paused": ("Paused", "paused"), "Done": ("Alerted", "done")}
+FILTERS = [("all", "All"), ("Active", "Watching"), ("Paused", "Paused"), ("Done", "Alerted")]
+EMPTY_FILTER_TEXT = {
+    "Active": "No watcher is checking right now.",
+    "Paused": "No paused watchers.",
+    "Done": "No watcher has finished its alerts yet.",
+}
+
+
+def action_button(action, task_id, label, icon_name, kind="", title=None, confirm=None):
+    attrs = f'data-bt-action="{action}" data-bt-id="{esc(task_id)}" title="{esc(title or label)}"'
+    if confirm:
+        attrs += (f' data-bt-confirm="{esc(confirm)}" data-bt-confirm-title="Delete this watcher?"'
+                  f' data-bt-confirm-ok="Delete"')
+    return f'<button type="button" class="bt-btn {kind}" {attrs}>{icon(icon_name)}<span>{label}</span></button>'
+
+
+def channel_names(task):
+    return [n for n, key in (("ntfy", "ntfy_topic"), ("Telegram", "telegram_chat_id"), ("Discord", "discord_webhook"))
+            if task.get(key)]
+
+
+def channel_chips(task):
+    names = channel_names(task)
+    if not names:
+        return '<span class="bt-chan none">No alert channel</span>'
+    return "".join(f'<span class="bt-chan">{n}</span>' for n in names)
+
+
+def watcher_card(task_id, t):
+    status = t.get("status", "")
+    label, tone = STATUS_META.get(status, (status or "Unknown", "paused"))
+    movie = esc(watcher_title(t))
+    owner = esc(t.get("user_label") or "Watcher")
+    cinema = esc(shorten(t.get("cinema_name") or cinema_name_from_url(t.get("cinema_url", "")), 52))
+    href = safe_href(t.get("cinema_url"))
+    cinema_html = (f'<a href="{href}" target="_blank" rel="noopener noreferrer">{cinema}{icon("external")}</a>'
+                   if href else cinema)
+    fmt = str(t.get("format_filter") or "ANY")
+    target = t.get("target_date", "")
+    tags = [f'<span class="bt-tag">{icon("film")}{"Any format" if fmt == "ANY" else esc(fmt)}</span>',
+            f'<span class="bt-tag">{icon("calendar")}{esc(date_label(target))}</span>']
+    if date_is_past(target):
+        tags.append('<span class="bt-tag warn">Date has passed</span>')
+
+    sent = to_int(t.get("alert_count")) or 0
+    max_alerts = to_int(t.get("max_alerts")) or 5
+    pct = min(100, round(100 * sent / max_alerts)) if max_alerts else 0
+
+    if t.get("last_checked"):
+        result = str(t.get("last_result") or "Checked")
+        last_tone = "hot" if result.startswith("🔥") else "warn" if result.startswith("⚠") else ""
+        last_icon = {"hot": "zap", "warn": "alert"}.get(last_tone, "clock")
+        result = result.lstrip("🔥⚠️ ").strip() or "Checked"
+        rel = ago(t.get("last_checked_ts"))
+        when = f"Checked {esc(t['last_checked'])} IST" + (f" · {rel}" if rel else "")
+        last_html = f'<div class="bt-last {last_tone}">{icon(last_icon)}<div><b>{esc(result)}</b><small>{when}</small></div></div>'
+    else:
+        waiting = "Waiting for the first check…" if status == "Active" else "Not checked yet"
+        last_html = f'<div class="bt-last">{icon("clock")}<div><b>{waiting}</b><small>Added {esc(t.get("created_at", ""))}</small></div></div>'
+
+    actions = []
+    if status == "Active":
+        actions.append(action_button("pause", task_id, "Pause", "pause", "primary", "Stop checking this watcher for now"))
+    elif status == "Paused":
+        actions.append(action_button("pause", task_id, "Resume", "play", "primary", "Start checking again"))
+    else:
+        actions.append(action_button("rearm", task_id, "Re-arm", "rotate", "primary", "Reset the alert count and watch again"))
+    if status != "Done" and sent > 0:
+        actions.append(action_button("rearm", task_id, "Re-arm", "rotate", "", "Reset the alert count and watch again"))
+    actions.append(action_button("test", task_id, "Test", "send", "", "Send a test alert to this watcher's channels"))
+    actions.append(action_button(
+        "delete", task_id, "Delete", "trash", "danger", "Delete this watcher",
+        confirm=f"BookTick stops watching for “{watcher_title(t)}” ({t.get('user_label') or 'Watcher'}). This can't be undone.",
+    ))
+
+    pulse = '<span class="bt-pulse"></span>' if status == "Active" else ""
+    return f"""
+<article class="bt-card" data-status="{esc(status)}">
+  <div class="bt-card-head">
+    <span class="bt-badge s-{tone}">{pulse}{label}</span>
+    <span class="bt-owner">{icon("user")}{owner}</span>
+  </div>
+  <div>
+    <h3 class="bt-card-title">{movie}</h3>
+    <div class="bt-card-cinema">{icon("pin")}{cinema_html}</div>
+  </div>
+  <div class="bt-tags">{"".join(tags)}</div>
+  <div class="bt-progress">
+    <div class="bt-progress-top"><span>Alerts sent</span><b>{sent} / {max_alerts}</b></div>
+    <div class="bt-bar"><i style="width:{pct}%"></i></div>
+  </div>
+  {last_html}
+  <div class="bt-chans">{icon("bell")}{channel_chips(t)}</div>
+  <div class="bt-actions">{"".join(actions)}</div>
+</article>"""
+
+
+def watchers_html():
+    with tasks_lock:
+        items = [(tid, dict(t)) for tid, t in app_state["tasks"].items()]
+    if not items:
+        return f"""
+<div class="bt-empty">
+  {logo_svg("empty", "bt-logo-lg")}
+  <h3>No watchers yet</h3>
+  <p>Set one up and {APP_NAME} will keep checking District for you, day and night.</p>
+  <button type="button" class="bt-btn primary" data-bt-goto="new">{icon("plus")}<span>Create a watcher</span></button>
+</div>"""
+
+    counts = {k: sum(1 for _, t in items if t.get("status") == k) for k in ("Active", "Paused", "Done")}
+    counts["all"] = len(items)
+    chips = "".join(
+        f'<button type="button" class="bt-chip" data-bt-filter="{key}">{label}<b>{counts[key]}</b></button>'
+        for key, label in FILTERS
+    )
+    banner = ""
+    if app_state["paused"]:
+        banner = callout(
+            "warn", "Checking is paused for everyone",
+            'No watcher is checked until the engine resumes. '
+            f'<button type="button" class="bt-link" data-bt-action="engine">{icon("play")}Resume now</button>',
+        )
+    cards = "".join(watcher_card(tid, t) for tid, t in reversed(items))  # newest first
+    empties = "".join(f'<div class="bt-filter-empty" data-for="{k}">{text}</div>'
+                      for k, text in EMPTY_FILTER_TEXT.items() if counts[k] == 0)
+    return f"""
+<div class="bt-watchers">
+  <div class="bt-toolbar">
+    <div class="bt-chips" role="group" aria-label="Filter watchers">{chips}</div>
+    <button type="button" class="bt-btn primary" data-bt-goto="new">{icon("plus")}<span>New watcher</span></button>
+  </div>
+  {banner}
+  <div class="bt-grid">{cards}</div>
+  {empties}
+</div>"""
+
+
+# --- Activity log -------------------------------------------------------------
+LOG_TONES = (("🔥", "hot"), ("⚠", "warn"), ("❌", "warn"), ("Engine error", "warn"), ("✅", "ok"),
+             ("➕", "info"), ("🔄", "info"), ("🧪", "info"), ("▶", "info"), ("⏸", "muted"), ("🗑", "muted"))
+
+
+def logs_html():
     with log_lock:
-        return "\n".join(reversed(app_state["logs"])) or "Nothing yet."
+        entries = list(reversed(app_state["logs"]))
+    if not entries:
+        return f'<div class="bt-log-empty">{icon("activity")}<span>Nothing yet. Checks, alerts and changes show up here.</span></div>'
+    rows = []
+    for entry in entries:
+        m = re.match(r"^\[([^\]]+)\] (.*)$", entry, re.S)
+        stamp, msg = (m.group(1), m.group(2)) if m else ("", entry)
+        tone = "sub" if msg.startswith("   ") else next((t for key, t in LOG_TONES if key in msg), "")
+        rows.append(f'<li class="bt-log-row {tone}" data-line="{esc(entry)}">'
+                    f'<time>{esc(stamp)}</time><span>{esc(msg.strip())}</span></li>')
+    return f'<ol class="bt-log-list">{"".join(rows)}</ol>'
 
 
-def clean_channels(ntfy, tg_token, tg_chat, discord):
-    """Validate alert settings. Returns (channels, error)."""
-    ntfy = re.sub(r"^(https?://)?ntfy\.sh/", "", (ntfy or "").strip()).strip("/")
-    tg_token, tg_chat, discord = (tg_token or "").strip(), (tg_chat or "").strip(), (discord or "").strip()
-    if ntfy and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", ntfy):
-        return None, "❌ ntfy topic names can only use letters, numbers, `-` and `_`."
-    if bool(tg_token) != bool(tg_chat):
-        return None, "❌ Telegram needs both the bot token and your chat ID."
-    if discord and not discord.startswith("https://"):
-        return None, "❌ The Discord webhook URL should start with `https://`."
-    if not (ntfy or tg_token or discord):
-        return None, "❌ Add at least one way to alert you: ntfy, Telegram or Discord."
-    return {"ntfy_topic": ntfy, "telegram_token": tg_token, "telegram_chat_id": tg_chat, "discord_webhook": discord}, None
+# --- Show preview -------------------------------------------------------------
+def show_chip(show, matched):
+    href = safe_href(show["url"])
+    avail, total = show["avail"], show["total"]
+    sold_out = avail == 0
+    if sold_out:
+        seats, pct = "Sold out", 0
+    elif avail is None:
+        seats, pct = "Seats open", None
+    elif total:
+        seats, pct = f"{avail} / {total} left", round(100 * avail / total)
+    else:
+        seats, pct = f"{avail} left", None
+    meta = " · ".join(esc(str(x)) for x in (show["format"], show["audi"]) if x)
+    bar = ""
+    if pct is not None:
+        bar = f'<span class="bt-seatbar{" low" if pct < 20 else ""}"><i style="width:{max(pct, 3)}%"></i></span>'
+    price = f"from {fmt_price(show['price'])}" if show["price"] else ""
+    book = f'<span class="bt-book">Book {icon("arrow")}</span>' if href and not sold_out else ""
+    classes = "bt-show" + (" match" if matched else "") + (" soldout" if sold_out else "")
+    inner = (f'<span class="bt-show-time">{fmt_clock(show["start"]) if show["start"] else "Time unknown"}</span>'
+             f'<span class="bt-show-meta">{meta}</span>'
+             f'<span class="bt-show-seats">{icon("seat")}{seats}</span>{bar}'
+             f'<span class="bt-show-foot"><span>{price}</span>{book}</span>')
+    if href:
+        return f'<a class="{classes}" href="{href}" target="_blank" rel="noopener noreferrer">{inner}</a>'
+    return f'<div class="{classes}">{inner}</div>'
+
+
+def movie_groups(shows, matched_ids, tag=""):
+    groups = {}
+    for s in shows:
+        groups.setdefault(s["title"], []).append(s)
+    out = []
+    for title, group in groups.items():
+        chips = "".join(show_chip(s, id(s) in matched_ids) for s in group)
+        out.append(f'<section class="bt-movie"><header><h4>{esc(title)}</h4>{tag}'
+                   f'<span class="bt-count">{plural(len(group), "show")}</span></header>'
+                   f'<div class="bt-shows">{chips}</div></section>')
+    return "".join(out)
 
 
 # ---------------------------------------------------------------------------
 # UI actions
 # ---------------------------------------------------------------------------
+def clean_channels(ntfy, tg_token, tg_chat, discord):
+    """Validate alert settings. Returns (channels, error)."""
+    ntfy = re.sub(r"^(https?://)?ntfy\.sh/", "", (ntfy or "").strip()).strip("/")
+    tg_token, tg_chat, discord = (tg_token or "").strip(), (tg_chat or "").strip(), (discord or "").strip()
+    if ntfy and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", ntfy):
+        return None, "ntfy topic names can only use letters, numbers, <code>-</code> and <code>_</code>."
+    if bool(tg_token) != bool(tg_chat):
+        return None, "Telegram needs both the bot token and your chat ID."
+    if discord and not discord.startswith("https://"):
+        return None, "The Discord webhook URL should start with <code>https://</code>."
+    if not (ntfy or tg_token or discord):
+        return None, "Add at least one way to alert you: ntfy, Telegram or Discord."
+    return {"ntfy_topic": ntfy, "telegram_token": tg_token, "telegram_chat_id": tg_chat, "discord_webhook": discord}, None
+
+
 def preview_shows(cin_url, movie_names, fmt_val, date_val):
-    hidden = gr.update(visible=False)
-    cin_url = (cin_url or "").strip()
-    if "district.in" not in cin_url:
-        return "❌ Paste a cinema page link from district.in first.", hidden
+    url = clean_cinema_url(cin_url)
+    if not url:
+        return callout("err", "That doesn't look like a District cinema link",
+                       "Open your cinema on district.in and copy the link from the address bar.")
     date = normalize_date(date_val)
     if not date:
-        return "❌ The date should look like 2026-11-20.", hidden
+        return callout("err", "Check the date", "It should look like 2026-11-20.")
     try:
-        cinema_name, shows = parse_district_shows(query_url(cin_url, date))
+        cinema_name, shows = parse_district_shows(query_url(url, date))
     except Exception as e:
-        return f"❌ Couldn't load that page: {e}", hidden
+        return callout("err", "Couldn't load that page", esc(str(e)))
 
     listed = [s for s in shows if on_date(s, date)]
+    title = (f'<div><div class="bt-eyebrow">{icon("pin")}Showtimes</div><h3>{esc(cinema_name)}</h3>'
+             f'<p>{esc(date_label(date))} · {plural(len(listed), "show")} listed</p></div>')
     if not listed:
-        return (f"### {cinema_name}\nNo shows are listed for **{date_label(date)}** yet. That's normal before "
-                f"bookings open, and a watcher will keep checking."), hidden
+        note = callout("info", f"No shows are listed for {esc(date_label(date))} yet",
+                       "That's normal before bookings open. A watcher will keep checking.")
+        return f'<div class="bt-preview"><div class="bt-preview-head">{title}</div>{note}</div>'
 
     keywords = split_keywords(movie_names)
     matched = [s for s in listed if show_matches(s, keywords, fmt_val)]
     matched_ids = {id(s) for s in matched}
     bookable = [s for s in matched if seats_open(s)]
+    others = [s for s in listed if id(s) not in matched_ids]
 
-    lines = [f"### {cinema_name}",
-             f"**{date_label(date)}** · {len(listed)} shows listed · **{len(matched)} match your filters** "
-             f"({len(bookable)} with seats)"]
+    head = (f'<div class="bt-preview-head">{title}<div class="bt-preview-stats">'
+            f'<span><b>{len(matched)}</b>match</span><span><b>{len(bookable)}</b>with seats</span></div></div>')
     if bookable:
-        lines.append("🔥 Tickets are already open for this. A watcher would alert you on its first check.")
-    elif not matched:
-        movies = sorted({s["title"] for s in listed})
-        formats = sorted({str(s["format"]) for s in listed})
-        lines.append(f"Nothing matches yet. **Movies here:** {', '.join(movies)}  \n**Formats:** {', '.join(formats)}")
+        note = callout("hot", "Tickets are already open for this",
+                       "A watcher would alert you on its very first check.")
+    elif matched:
+        note = callout("warn", "Every matching show is sold out right now",
+                       "A watcher will alert you if seats free up.")
+    else:
+        movies = "".join(f'<span class="bt-tag">{esc(t)}</span>' for t in sorted({s["title"] for s in listed}))
+        formats = "".join(f'<span class="bt-tag">{esc(str(f))}</span>' for f in sorted({str(s["format"]) for s in listed}))
+        note = callout("info", "Nothing matches your filters yet",
+                       f'<div class="bt-kv"><b>Movies here</b><div class="bt-tags">{movies}</div></div>'
+                       f'<div class="bt-kv"><b>Formats</b><div class="bt-tags">{formats}</div></div>')
 
-    rows = sorted(listed, key=lambda s: id(s) not in matched_ids)
-    table = pd.DataFrame(
-        [["✅" if id(s) in matched_ids else "", s["title"], s["format"], fmt_when(s["start"]), fmt_seats(s), fmt_price(s["price"])]
-         for s in rows],
-        columns=PREVIEW_HEADERS,
-    )
-    return "\n\n".join(lines), gr.update(value=table, visible=True)
+    body = ""
+    if matched:
+        body += movie_groups(matched, matched_ids, '<span class="bt-pill">Matches your filters</span>')
+    if others:
+        body += (f'<details class="bt-others"{"" if matched else " open"}><summary>'
+                 f'Other shows at this cinema <span class="bt-count">{len(others)}</span></summary>'
+                 f'{movie_groups(others, matched_ids)}</details>')
+    return f'<div class="bt-preview">{head}{note}{body}</div>'
 
 
 def test_user_notification(user_name, cin_url, ntfy_top, tg_tok, tg_chat, disc_url):
     channels, error = clean_channels(ntfy_top, tg_tok, tg_chat, disc_url)
     if error:
-        return error
+        return callout("err", "Can't send a test yet", error)
     task = dict(channels, user_label=(user_name or "").strip() or "Test")
-    start = (now_ist() + timedelta(hours=3)).replace(minute=30, second=0, microsecond=0)
-    show = [{
-        "title": "Test Movie", "format": "IMAX 3D", "start": start, "audi": "",
-        "avail": 120, "total": 200, "price": 450.0,
-        "url": (cin_url or "").strip() or "https://www.district.in",
-    }]
-    results = send_task_notification(task, show, "District Cinema", test=True)
+    url = clean_cinema_url(cin_url)
+    cinema = cinema_name_from_url(url) if url else "Sample Cinema"
+    results = send_task_notification(task, sample_shows(url), cinema, test=True)
     if all(ok for _, ok, _ in results):
-        return f"🔔 Test sent: {describe_results(results)}. Check your phone."
-    return f"⚠️ Some alerts failed: {describe_results(results)}"
+        return callout("ok", "Test alert sent. Check your phone.", esc(describe_results(results)))
+    return callout("warn", "Some alerts didn't go through", esc(describe_results(results)))
 
 
 def add_new_watcher(user_name, cin_url, movie_names, fmt_val, date_val, max_alerts_val, ntfy_top, tg_tok, tg_chat, disc_url):
     keep = gr.update()
-    cin_url = (cin_url or "").strip()
-    if "district.in" not in cin_url:
-        return "❌ Paste a cinema page link from district.in.", keep, keep
+    url = clean_cinema_url(cin_url)
+    if not url:
+        return callout("err", "Paste a cinema page link from district.in",
+                       "Open your cinema on district.in and copy the link from the address bar."), keep, keep
     date = normalize_date(date_val)
     if not date:
-        return "❌ The date should look like 2026-11-20.", keep, keep
+        return callout("err", "Check the date", "It should look like 2026-11-20."), keep, keep
     channels, error = clean_channels(ntfy_top, tg_tok, tg_chat, disc_url)
     if error:
-        return error, keep, keep
+        return callout("err", "Where should we alert you?", error), keep, keep
 
     task_id = "w_" + uuid.uuid4().hex[:6]
     name = (user_name or "").strip() or f"User {len(app_state['tasks']) + 1}"
@@ -747,8 +1118,8 @@ def add_new_watcher(user_name, cin_url, movie_names, fmt_val, date_val, max_aler
         channels,
         id=task_id,
         user_label=name,
-        cinema_url=cin_url,
-        cinema_name=cinema_name_from_url(cin_url),
+        cinema_url=url,
+        cinema_name=cinema_name_from_url(url),
         target_date=date,
         movie_filter=(movie_names or "").strip(),
         format_filter=(fmt_val or "ANY").strip().upper(),
@@ -763,247 +1134,847 @@ def add_new_watcher(user_name, cin_url, movie_names, fmt_val, date_val, max_aler
     wake_engine.set()
 
     movie = task["movie_filter"] or "any movie"
-    add_log(f"➕ [{name}] watching for {movie} ({task['format_filter']}) on {date_label(date)} via {channels_summary(task)}.")
-    msg = (f"✅ **{name}** is watching for **{movie}** ({task['format_filter']}) on **{date_label(date)}**. "
-           f"The first check runs now. Follow it in the Watchers tab.")
-    return msg, get_tasks_table(), gr.update(choices=watcher_choices())
-
-
-def manage_result(msg, selected):
-    choices = watcher_choices()
-    value = selected if any(v == selected for _, v in choices) else None
-    return msg, get_tasks_table(), gr.update(choices=choices, value=value)
+    add_log(f"➕ [{name}] watching for {movie} ({task['format_filter']}) on {date_label(date)} via {' · '.join(channel_names(task))}.")
+    msg = callout(
+        "ok", f"{esc(name)}'s watcher is live",
+        f"Watching for <b>{esc(movie)}</b> ({esc(task['format_filter'])}) on <b>{esc(date_label(date))}</b>. "
+        f'The first check runs now. <button type="button" class="bt-link" data-bt-goto="watchers">'
+        f'See it in Watchers{icon("arrow")}</button>',
+    )
+    return msg, watchers_html(), status_html()
 
 
 def toggle_watcher(task_id):
-    if not task_id:
-        return manage_result("Pick a watcher first.", None)
     with tasks_lock:
         task = app_state["tasks"].get(task_id)
         if not task:
-            return manage_result("That watcher no longer exists.", None)
+            return False, "That watcher no longer exists."
         status = task.get("status")
         if status == "Done":
-            return manage_result("This watcher already sent all its alerts. Use **Re-arm** to start it again.", task_id)
+            return False, "This watcher already sent all its alerts. Re-arm it to start again."
         task["status"] = "Paused" if status == "Active" else "Active"
         save_tasks()
-        name, new_status = task.get("user_label"), task["status"]
+        name, new_status, title = task.get("user_label"), task["status"], watcher_title(task)
     wake_engine.set()
-    add_log(f"{'⏸' if new_status == 'Paused' else '▶'} [{name}] {'paused' if new_status == 'Paused' else 'resumed'}.")
-    return manage_result(f"{STATUS_LABELS[new_status]}: **{name}**", task_id)
+    paused = new_status == "Paused"
+    add_log(f"{'⏸' if paused else '▶'} [{name}] {'paused' if paused else 'resumed'}.")
+    return True, f"{'Paused' if paused else 'Resumed'} the {title} watcher."
 
 
 def rearm_watcher(task_id):
-    if not task_id:
-        return manage_result("Pick a watcher first.", None)
     with tasks_lock:
         task = app_state["tasks"].get(task_id)
         if not task:
-            return manage_result("That watcher no longer exists.", None)
-        task.update(alert_count=0, status="Active", last_result="", last_checked="")
+            return False, "That watcher no longer exists."
+        task.update(alert_count=0, status="Active", last_result="", last_checked="", last_checked_ts=None)
         save_tasks()
-        name = task.get("user_label")
+        name, title = task.get("user_label"), watcher_title(task)
     wake_engine.set()
     add_log(f"🔄 [{name}] re-armed: alert count reset and watching again.")
-    return manage_result(f"🔄 **{name}** is re-armed and watching again.", task_id)
+    return True, f"Re-armed the {title} watcher. It's watching again."
 
 
 def delete_watcher(task_id):
-    if not task_id:
-        return manage_result("Pick a watcher first.", None)
     with tasks_lock:
         task = app_state["tasks"].pop(task_id, None)
         if task:
             save_tasks()
     if not task:
-        return manage_result("That watcher no longer exists.", None)
+        return False, "That watcher no longer exists."
     add_log(f"🗑️ [{task.get('user_label')}] watcher deleted.")
-    return manage_result(f"🗑️ Deleted **{task.get('user_label')}**.", None)
+    return True, f"Deleted the {watcher_title(task)} watcher."
 
 
-def refresh_watchers(selected):
-    _, table, dropdown = manage_result("", selected)
-    return table, dropdown
+def test_watcher(task_id):
+    with tasks_lock:
+        task = app_state["tasks"].get(task_id)
+        snapshot = dict(task) if task else None
+    if not snapshot:
+        return False, "That watcher no longer exists."
+    cinema = snapshot.get("cinema_name") or cinema_name_from_url(snapshot.get("cinema_url", ""))
+    results = send_task_notification(snapshot, sample_shows(snapshot.get("cinema_url")), cinema, test=True)
+    summary = describe_results(results)
+    add_log(f"🧪 [{snapshot.get('user_label')}] test alert: {summary}")
+    if results and all(ok for _, ok, _ in results):
+        return True, f"Test alert sent: {summary}"
+    return False, f"Some test alerts failed: {summary}"
 
 
-def toggle_engine():
+def engine_note_html():
+    if app_state["paused"]:
+        return callout("warn", "Paused for everyone", "No watcher is being checked until you resume.")
+    return callout("ok", "Running", f"Every active watcher is checked every {app_state['interval_sec']} seconds.")
+
+
+def engine_button_update():
+    if app_state["paused"]:
+        return gr.update(value="Resume checking", variant="primary")
+    return gr.update(value="Pause all checking", variant="secondary")
+
+
+def flip_engine():
     app_state["paused"] = not app_state["paused"]
     wake_engine.set()
     if app_state["paused"]:
         add_log("⏸ Engine paused. No watcher is being checked.")
-        return "⏸ Paused. No watcher is being checked until you resume.", status_html()
+        return "Paused. No watcher is being checked until you resume."
     add_log("▶ Engine resumed.")
-    return "▶ Running. Checks resumed.", status_html()
+    return "Running. Checks resumed."
+
+
+def run_watcher_action(payload):
+    """Handles the buttons inside the HTML cards (they send 'action:watcher_id')."""
+    action, _, task_id = str(payload or "").partition(":")
+    keep = gr.update()
+    engine_outputs = (keep, keep)
+    if action == "engine":
+        toast(True, flip_engine())
+        engine_outputs = (engine_note_html(), engine_button_update())
+    elif action in ("pause", "rearm", "delete", "test"):
+        handler = {"pause": toggle_watcher, "rearm": rearm_watcher, "delete": delete_watcher, "test": test_watcher}[action]
+        ok, msg = handler(task_id)
+        toast(ok, msg)
+    else:
+        return keep, keep, keep, keep
+    return (watchers_html(), status_html()) + engine_outputs
+
+
+def toggle_engine():
+    toast(True, flip_engine())
+    return engine_note_html(), engine_button_update(), status_html(), watchers_html()
 
 
 def change_interval(val):
     app_state["interval_sec"] = max(5, int(val))
     add_log(f"⏱️ Check interval set to {app_state['interval_sec']}s.")
-    return f"⏱️ Checking every {app_state['interval_sec']} seconds.", status_html()
+    toast(True, f"Checking every {app_state['interval_sec']} seconds.")
+    return engine_note_html(), status_html()
 
 
 def clear_logs():
     with log_lock:
         app_state["logs"].clear()
-    return logs_text()
+    return logs_html()
 
 
 def poll_status():
-    return status_html(), get_tasks_table(), logs_text()
+    return status_html(), watchers_html(), logs_html()
 
 
 def on_page_load():
     return (
         gr.update(choices=date_choices(), value=today_ist()),
         gr.update(value=app_state["interval_sec"]),
-        get_tasks_table(),
-        gr.update(choices=watcher_choices()),
+        watchers_html(),
         status_html(),
+        engine_note_html(),
+        engine_button_update(),
+        logs_html(),
     )
+
+
+# ---------------------------------------------------------------------------
+# Look and feel
+# ---------------------------------------------------------------------------
+BRAND_HUE = gr.themes.Color(
+    c50="#fff4f1", c100="#ffe6df", c200="#ffcdbf", c300="#ffa892", c400="#ff7b5e", c500="#f9573a",
+    c600="#e33d22", c700="#bf2f18", c800="#9d2a19", c900="#82281b", c950="#470f08", name="booktick",
+)
+GRADIENT = "linear-gradient(135deg, #ff6b4a 0%, #f43f7a 100%)"
+GRADIENT_HOVER = "linear-gradient(135deg, #ff5a36 0%, #ec2d6c 100%)"
+
+theme = gr.themes.Soft(
+    primary_hue=BRAND_HUE,
+    secondary_hue="slate",
+    neutral_hue="slate",
+    radius_size=gr.themes.sizes.radius_lg,
+    font=[gr.themes.GoogleFont("Plus Jakarta Sans"), "ui-sans-serif", "system-ui", "sans-serif"],
+    font_mono=[gr.themes.GoogleFont("JetBrains Mono"), "ui-monospace", "Consolas", "monospace"],
+).set(
+    body_background_fill="#f4f4f9",
+    body_background_fill_dark="#0b0c16",
+    body_text_color="#161729",
+    body_text_color_dark="#ececf4",
+    body_text_color_subdued="#686a82",
+    body_text_color_subdued_dark="#9a9cb5",
+    background_fill_primary="#ffffff",
+    background_fill_primary_dark="#151624",
+    background_fill_secondary="#f7f7fb",
+    background_fill_secondary_dark="#1c1d2e",
+    border_color_primary="#e8e8f0",
+    border_color_primary_dark="#2a2b40",
+    block_background_fill="#ffffff",
+    block_background_fill_dark="#151624",
+    block_border_color="#e8e8f0",
+    block_border_color_dark="#2a2b40",
+    block_shadow="none",
+    block_shadow_dark="none",
+    block_label_text_weight="600",
+    block_title_text_weight="650",
+    block_title_background_fill="transparent",
+    block_title_background_fill_dark="transparent",
+    block_title_text_color="#161729",
+    block_title_text_color_dark="#ececf4",
+    block_title_padding="0",
+    block_title_radius="0",
+    block_info_text_color="#686a82",
+    block_info_text_color_dark="#9a9cb5",
+    input_background_fill="#f7f7fb",
+    input_background_fill_dark="#1c1d2e",
+    input_border_color="#e3e3ec",
+    input_border_color_dark="#30314a",
+    input_border_color_focus="#f9573a",
+    input_border_color_focus_dark="#f9573a",
+    input_shadow="none",
+    input_shadow_dark="none",
+    input_shadow_focus="0 0 0 3px rgba(249, 87, 58, .18)",
+    input_shadow_focus_dark="0 0 0 3px rgba(249, 87, 58, .25)",
+    button_large_radius="12px",
+    button_small_radius="10px",
+    button_primary_background_fill=GRADIENT,
+    button_primary_background_fill_dark=GRADIENT,
+    button_primary_background_fill_hover=GRADIENT_HOVER,
+    button_primary_background_fill_hover_dark=GRADIENT_HOVER,
+    button_primary_text_color="#ffffff",
+    button_primary_text_color_dark="#ffffff",
+    button_primary_border_color="transparent",
+    button_primary_border_color_dark="transparent",
+    button_secondary_background_fill="#ffffff",
+    button_secondary_background_fill_dark="#1c1d2e",
+    button_secondary_background_fill_hover="#f4f4f9",
+    button_secondary_background_fill_hover_dark="#24253a",
+    button_secondary_border_color="#e3e3ec",
+    button_secondary_border_color_dark="#30314a",
+    button_secondary_text_color="#161729",
+    button_secondary_text_color_dark="#ececf4",
+    slider_color="#f9573a",
+    slider_color_dark="#f9573a",
+    color_accent_soft="#ffe6df",
+    color_accent_soft_dark="rgba(249, 87, 58, .16)",
+)
+
+CSS = """
+:root {
+  --bt-brand: #f9573a; --bt-brand-strong: #d93a20; --bt-grad: linear-gradient(135deg, #ff6b4a 0%, #f43f7a 100%);
+  --bt-ink: #12132a; --bt-surface: #ffffff; --bt-surface-2: #f6f6fa; --bt-line: #e8e8f0;
+  --bt-text: #161729; --bt-muted: #686a82; --bt-on-bg: #12132a; --bt-on-fg: #ffffff;
+  --bt-ok: #15803d; --bt-ok-bg: #e5f7ec; --bt-warn: #b45309; --bt-warn-bg: #fff3d9;
+  --bt-done: #4f46e5; --bt-done-bg: #ecebfe; --bt-hot: #d4361c; --bt-hot-bg: #ffebe5;
+  --bt-err: #c81e3a; --bt-err-bg: #ffe8ec; --bt-info: #2563eb; --bt-info-bg: #e8f0fe;
+  --bt-shadow: 0 1px 2px rgba(18, 19, 42, .05), 0 10px 28px -16px rgba(18, 19, 42, .18);
+  --bt-radius: 18px;
+}
+.dark {
+  --bt-surface: #151624; --bt-surface-2: #1c1d2e; --bt-line: #2a2b40; --bt-text: #ececf4; --bt-muted: #9a9cb5;
+  --bt-on-bg: #f1f1f8; --bt-on-fg: #12132a;
+  --bt-ok: #4ade80; --bt-ok-bg: rgba(74, 222, 128, .12); --bt-warn: #fbbf24; --bt-warn-bg: rgba(251, 191, 36, .12);
+  --bt-done: #a5b4fc; --bt-done-bg: rgba(129, 140, 248, .16); --bt-hot: #ff8a6e; --bt-hot-bg: rgba(249, 87, 58, .15);
+  --bt-err: #fb7185; --bt-err-bg: rgba(244, 63, 94, .14); --bt-info: #93c5fd; --bt-info-bg: rgba(96, 165, 250, .14);
+  --bt-shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 12px 30px -18px rgba(0, 0, 0, .7);
+}
+
+.gradio-container { max-width: 1200px !important; margin: 0 auto !important; }
+.bt-hidden { display: none !important; }
+.bt-i { width: 1em; height: 1em; flex: none; fill: none; stroke: currentColor; stroke-width: 2;
+        stroke-linecap: round; stroke-linejoin: round; }
+.bt-root-html, .bt-root-html > .prose { padding: 0 !important; }
+
+/* ---------- header ---------- */
+.bt-hero { position: relative; overflow: hidden; display: flex; align-items: center; justify-content: space-between;
+  gap: 18px; flex-wrap: wrap; padding: 22px 26px; border-radius: 22px; color: #fff;
+  background: radial-gradient(110% 160% at 0% 0%, rgba(255, 107, 74, .38) 0%, rgba(255, 107, 74, 0) 52%),
+              radial-gradient(90% 140% at 100% 100%, rgba(244, 63, 122, .32) 0%, rgba(244, 63, 122, 0) 58%), #12132a;
+  box-shadow: 0 18px 40px -24px rgba(18, 19, 42, .7); }
+.bt-hero::after { content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .5;
+  background-image: radial-gradient(rgba(255, 255, 255, .09) 1px, transparent 1px); background-size: 18px 18px;
+  mask-image: linear-gradient(90deg, transparent, #000 60%); -webkit-mask-image: linear-gradient(90deg, transparent, #000 60%); }
+.bt-brand { position: relative; z-index: 1; display: flex; align-items: center; gap: 14px; min-width: 0; }
+.bt-logo { width: 54px; height: 54px; flex: none; filter: drop-shadow(0 8px 18px rgba(249, 87, 58, .45)); }
+.bt-wordmark { font-size: 1.85rem; font-weight: 800; letter-spacing: -.03em; line-height: 1.05; color: #fff; }
+.bt-wordmark span { background: linear-gradient(135deg, #ff8a6b 0%, #ff5c93 100%); -webkit-background-clip: text;
+  background-clip: text; color: transparent; }
+.bt-hero .bt-tagline { margin: 6px 0 0; color: rgba(255, 255, 255, .72); font-size: .98rem; line-height: 1.4; }
+.bt-gh { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 10px; padding: 6px 14px 6px 6px;
+  border-radius: 999px; background: rgba(255, 255, 255, .08); border: 1px solid rgba(255, 255, 255, .16);
+  color: #fff !important; text-decoration: none !important; transition: background .2s, border-color .2s; }
+.bt-gh:hover { background: rgba(255, 255, 255, .15); border-color: rgba(255, 255, 255, .3); }
+.bt-gh img { width: 36px; height: 36px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, .25); margin: 0; }
+.bt-gh-text { display: flex; flex-direction: column; line-height: 1.15; }
+.bt-gh-text small { font-size: .66rem; letter-spacing: .09em; text-transform: uppercase; color: rgba(255, 255, 255, .6); }
+.bt-gh-text b { font-size: .92rem; font-weight: 700; color: #fff; }
+.bt-gh-mark { width: 20px; height: 20px; flex: none; opacity: .9; }
+
+/* ---------- stats ---------- */
+.bt-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.bt-stat { position: relative; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px; padding: 14px 16px; min-width: 0;
+  background: var(--bt-surface); border: 1px solid var(--bt-line); border-radius: var(--bt-radius); box-shadow: var(--bt-shadow); }
+.bt-stat-icon { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; font-size: 19px; flex: none; }
+.bt-stat-body { flex: 1; min-width: 0; }
+.tone-brand { background: var(--bt-hot-bg); color: var(--bt-brand); }
+.tone-ok { background: var(--bt-ok-bg); color: var(--bt-ok); }
+.tone-hot { background: var(--bt-done-bg); color: var(--bt-done); }
+.tone-info { background: var(--bt-info-bg); color: var(--bt-info); }
+.bt-stat-label { font-size: .7rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--bt-muted); }
+.bt-stat-value { display: flex; align-items: center; gap: 8px; margin: 2px 0 1px; font-size: 1.4rem; font-weight: 800;
+  letter-spacing: -.02em; line-height: 1.25; color: var(--bt-text); white-space: nowrap; }
+.bt-stat-sub { font-size: .78rem; color: var(--bt-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bt-live { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.bt-live.on { background: #22c55e; animation: bt-ring 1.8s ease-out infinite; }
+.bt-live.off { background: #f59e0b; box-shadow: 0 0 0 4px rgba(245, 158, 11, .2); }
+.bt-mini { position: absolute; top: 12px; right: 12px; display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px;
+  border-radius: 8px; border: 1px solid var(--bt-line); background: var(--bt-surface-2); color: var(--bt-text);
+  font: inherit; font-size: .76rem; font-weight: 700; cursor: pointer; transition: background .15s, border-color .15s; }
+.bt-mini:hover { border-color: var(--bt-brand); color: var(--bt-brand); }
+@keyframes bt-ring { 0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, .55); } 75%, 100% { box-shadow: 0 0 0 8px rgba(34, 197, 94, 0); } }
+
+/* ---------- tabs ---------- */
+#bt-tabs { margin-top: 4px; }
+#bt-tabs > .tab-nav { display: flex; gap: 4px; width: fit-content; max-width: 100%; overflow-x: auto; padding: 5px;
+  border: 1px solid var(--bt-line) !important; border-radius: 14px; background: var(--bt-surface); box-shadow: var(--bt-shadow); }
+#bt-tabs > .tab-nav button { flex: none; margin: 0; padding: 8px 18px; border: none !important; border-radius: 10px !important;
+  background: transparent; color: var(--bt-muted); font-weight: 650; font-size: .92rem; transition: background .15s, color .15s; }
+#bt-tabs > .tab-nav button:hover { color: var(--bt-text); background: var(--bt-surface-2); }
+#bt-tabs > .tab-nav button.selected { background: var(--bt-on-bg); color: var(--bt-on-fg); }
+#bt-tabs > .tabitem { padding: 16px 0 0 !important; border: none !important; background: transparent !important; }
+
+/* ---------- form steps ---------- */
+.bt-step { padding: 18px !important; gap: 14px !important; background: var(--bt-surface) !important;
+  border: 1px solid var(--bt-line) !important; border-radius: var(--bt-radius) !important; box-shadow: var(--bt-shadow); }
+.bt-step .form { gap: 14px !important; border: none !important; background: transparent !important; box-shadow: none !important; overflow: visible !important; }
+.bt-step .form > .block, .bt-step > .block { padding: 0 !important; border: none !important; background: transparent !important; box-shadow: none !important; }
+.bt-step .row { gap: 14px !important; }
+.bt-step-head { display: flex; align-items: flex-start; gap: 12px; }
+.bt-step-num { width: 32px; height: 32px; flex: none; display: grid; place-items: center; border-radius: 10px;
+  background: var(--bt-grad); color: #fff; font-weight: 800; font-size: .9rem; box-shadow: 0 6px 14px -8px rgba(244, 63, 122, .9); }
+.bt-step-num .bt-i { font-size: 17px; }
+.bt-step-head h3 { margin: 0 !important; font-size: 1.08rem; font-weight: 750; color: var(--bt-text); letter-spacing: -.01em; }
+.bt-step-head p { margin: 2px 0 0 !important; font-size: .86rem; color: var(--bt-muted); }
+.bt-stack { gap: 16px !important; }
+#bt-channel-tabs > .tab-nav { display: flex; gap: 4px; width: fit-content; max-width: 100%; padding: 4px; border: none !important;
+  border-radius: 12px; background: var(--bt-surface-2); }
+#bt-channel-tabs > .tab-nav button { margin: 0; padding: 6px 14px; border: none !important; border-radius: 9px !important;
+  background: transparent; color: var(--bt-muted); font-weight: 650; font-size: .86rem; }
+#bt-channel-tabs > .tab-nav button.selected { background: var(--bt-surface); color: var(--bt-text); box-shadow: 0 1px 3px rgba(18, 19, 42, .14); }
+#bt-channel-tabs > .tabitem { padding: 12px 0 0 !important; border: none !important; background: transparent !important; }
+.bt-hint { margin: 0 0 10px !important; font-size: .86rem; color: var(--bt-muted); }
+.bt-hint b { color: var(--bt-text); }
+.bt-cta-row { gap: 10px !important; }
+.bt-cta-row button { min-height: 46px; font-weight: 700 !important; }
+
+/* ---------- callouts ---------- */
+.bt-callout { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; border-radius: 14px;
+  font-size: .9rem; line-height: 1.5; background: var(--bt-surface-2); color: var(--bt-text); }
+.bt-callout > .bt-i { font-size: 19px; margin-top: 1px; }
+.bt-callout-title { font-weight: 750; }
+.bt-callout-body { color: var(--bt-text); opacity: .88; }
+.bt-callout code { padding: 1px 6px; border-radius: 6px; background: rgba(127, 127, 160, .16); font-size: .85em; }
+.bt-callout.ok { background: var(--bt-ok-bg); } .bt-callout.ok > .bt-i, .bt-callout.ok .bt-callout-title { color: var(--bt-ok); }
+.bt-callout.err { background: var(--bt-err-bg); } .bt-callout.err > .bt-i, .bt-callout.err .bt-callout-title { color: var(--bt-err); }
+.bt-callout.warn { background: var(--bt-warn-bg); } .bt-callout.warn > .bt-i, .bt-callout.warn .bt-callout-title { color: var(--bt-warn); }
+.bt-callout.info { background: var(--bt-info-bg); } .bt-callout.info > .bt-i, .bt-callout.info .bt-callout-title { color: var(--bt-info); }
+.bt-callout.hot { background: var(--bt-hot-bg); } .bt-callout.hot > .bt-i, .bt-callout.hot .bt-callout-title { color: var(--bt-hot); }
+.bt-link { display: inline-flex; align-items: center; gap: 5px; padding: 0; margin: 0 0 0 4px; border: none; background: none;
+  color: var(--bt-brand); font: inherit; font-weight: 700; cursor: pointer; }
+.bt-link:hover { text-decoration: underline; }
+.bt-kv { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.bt-kv > b { font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; color: var(--bt-muted); }
+
+/* ---------- help + about ---------- */
+.bt-help, .bt-about { padding: 20px; border-radius: var(--bt-radius); background: var(--bt-surface);
+  border: 1px solid var(--bt-line); box-shadow: var(--bt-shadow); color: var(--bt-text); }
+.bt-help h3, .bt-about h3 { margin: 0 !important; font-size: 1.05rem; font-weight: 750; }
+.bt-help h4 { margin: 4px 0 10px !important; font-size: .78rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--bt-muted); }
+.bt-steps { counter-reset: bt-step; list-style: none !important; padding: 0 !important; margin: 14px 0 18px !important;
+  display: flex; flex-direction: column; gap: 14px; }
+.bt-steps li { counter-increment: bt-step; display: grid; grid-template-columns: 30px 1fr; column-gap: 12px; row-gap: 2px; margin: 0 !important; padding: 0 !important; }
+.bt-steps li::before { content: counter(bt-step); grid-row: span 2; width: 30px; height: 30px; display: grid; place-items: center;
+  border-radius: 10px; background: var(--bt-hot-bg); color: var(--bt-brand); font-weight: 800; font-size: .85rem; }
+.bt-steps b { font-size: .92rem; font-weight: 700; }
+.bt-steps span { font-size: .85rem; line-height: 1.5; color: var(--bt-muted); }
+.bt-help a { color: var(--bt-brand); font-weight: 600; }
+.bt-tips { list-style: none !important; padding: 0 !important; margin: 0 !important; display: flex; flex-direction: column; gap: 10px; }
+.bt-tips li { display: flex; gap: 10px; margin: 0 !important; padding: 10px 12px !important; border-radius: 12px; background: var(--bt-surface-2);
+  font-size: .84rem; line-height: 1.5; color: var(--bt-muted); }
+.bt-tips li::marker { content: none; }
+.bt-tips .bt-i { font-size: 16px; margin-top: 2px; color: var(--bt-brand); }
+.bt-tips code { padding: 1px 6px; border-radius: 6px; background: var(--bt-surface); border: 1px solid var(--bt-line); font-size: .85em; color: var(--bt-text); }
+.bt-about { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.bt-aside { position: sticky; top: 16px; align-self: flex-start; }
+.bt-about p { margin: 0 !important; font-size: .9rem; line-height: 1.55; color: var(--bt-muted); }
+.bt-logo-md { width: 44px; height: 44px; }
+.bt-gh-card { display: flex; align-items: center; gap: 12px; width: 100%; margin-top: 6px; padding: 10px 14px 10px 10px;
+  border-radius: 14px; border: 1px solid var(--bt-line); background: var(--bt-surface-2); color: var(--bt-text) !important;
+  text-decoration: none !important; transition: border-color .15s, transform .15s; }
+.bt-gh-card:hover { border-color: var(--bt-brand); transform: translateY(-1px); }
+.bt-gh-card img { width: 44px; height: 44px; border-radius: 50%; margin: 0; }
+.bt-gh-card span { display: flex; flex-direction: column; flex: 1; line-height: 1.3; }
+.bt-gh-card small { color: var(--bt-muted); font-size: .8rem; }
+.bt-gh-card .bt-gh-mark { width: 22px; height: 22px; }
+
+/* ---------- buttons inside HTML ---------- */
+.bt-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 36px; padding: 0 12px;
+  border-radius: 10px; border: 1px solid var(--bt-line); background: var(--bt-surface); color: var(--bt-text);
+  font: inherit; font-size: .84rem; font-weight: 650; white-space: nowrap; cursor: pointer;
+  transition: background .15s, border-color .15s, color .15s, transform .05s, filter .15s; }
+.bt-btn .bt-i { font-size: 15px; }
+.bt-btn:hover { background: var(--bt-surface-2); border-color: color-mix(in srgb, var(--bt-text) 22%, var(--bt-line)); }
+.bt-btn:active { transform: translateY(1px); }
+.bt-btn:focus-visible, .bt-chip:focus-visible, .bt-mini:focus-visible, .bt-link:focus-visible { outline: 2px solid var(--bt-brand); outline-offset: 2px; }
+.bt-btn.primary { background: var(--bt-grad); color: #fff; border-color: transparent; box-shadow: 0 8px 18px -10px rgba(244, 63, 122, .85); }
+.bt-btn.primary:hover { filter: brightness(1.06) saturate(1.05); }
+.bt-btn.danger { color: var(--bt-err); }
+.bt-btn.danger:hover { background: var(--bt-err-bg); border-color: transparent; }
+.bt-btn.danger-solid { background: #dc2645; border-color: transparent; color: #fff; }
+.bt-btn.danger-solid:hover { background: #c01d3a; }
+
+/* ---------- watchers ---------- */
+.bt-watchers { display: flex; flex-direction: column; gap: 14px; }
+.bt-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.bt-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.bt-chip { display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 8px 0 14px; border-radius: 999px;
+  border: 1px solid var(--bt-line); background: var(--bt-surface); color: var(--bt-muted); font: inherit; font-size: .85rem;
+  font-weight: 650; cursor: pointer; transition: background .15s, color .15s, border-color .15s; }
+.bt-chip b { min-width: 22px; padding: 1px 7px; border-radius: 999px; background: var(--bt-surface-2); color: var(--bt-text); font-size: .74rem; text-align: center; }
+.bt-chip:hover { color: var(--bt-text); }
+html:not([data-bt-view]) .bt-chip[data-bt-filter="all"], html[data-bt-view="all"] .bt-chip[data-bt-filter="all"],
+html[data-bt-view="Active"] .bt-chip[data-bt-filter="Active"], html[data-bt-view="Paused"] .bt-chip[data-bt-filter="Paused"],
+html[data-bt-view="Done"] .bt-chip[data-bt-filter="Done"] {
+  background: var(--bt-on-bg) !important; border-color: var(--bt-on-bg) !important; color: var(--bt-on-fg) !important; }
+html:not([data-bt-view]) .bt-chip[data-bt-filter="all"] b, html[data-bt-view="all"] .bt-chip[data-bt-filter="all"] b,
+html[data-bt-view="Active"] .bt-chip[data-bt-filter="Active"] b, html[data-bt-view="Paused"] .bt-chip[data-bt-filter="Paused"] b,
+html[data-bt-view="Done"] .bt-chip[data-bt-filter="Done"] b { background: rgba(127, 127, 160, .28) !important; color: inherit !important; }
+/* !important: Gradio adds a higher-specificity copy of every rule, which would otherwise win over these. */
+html[data-bt-view="Active"] .bt-card:not([data-status="Active"]), html[data-bt-view="Paused"] .bt-card:not([data-status="Paused"]),
+html[data-bt-view="Done"] .bt-card:not([data-status="Done"]) { display: none !important; }
+.bt-filter-empty { display: none; padding: 28px; border: 1px dashed var(--bt-line); border-radius: var(--bt-radius);
+  text-align: center; color: var(--bt-muted); font-size: .9rem; }
+html[data-bt-view="Active"] .bt-filter-empty[data-for="Active"], html[data-bt-view="Paused"] .bt-filter-empty[data-for="Paused"],
+html[data-bt-view="Done"] .bt-filter-empty[data-for="Done"] { display: block !important; }
+
+.bt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.bt-card { position: relative; display: flex; flex-direction: column; gap: 12px; padding: 16px; min-width: 0;
+  background: var(--bt-surface); border: 1px solid var(--bt-line); border-radius: var(--bt-radius); box-shadow: var(--bt-shadow);
+  transition: border-color .18s, box-shadow .18s, transform .18s, opacity .18s; }
+.bt-card:hover { border-color: color-mix(in srgb, var(--bt-brand) 30%, var(--bt-line)); transform: translateY(-1px); }
+.bt-card[data-status="Active"]::before { content: ""; position: absolute; left: 16px; right: 16px; top: -1px; height: 3px;
+  border-radius: 0 0 4px 4px; background: var(--bt-grad); }
+.bt-card.is-busy { opacity: .55; pointer-events: none; }
+.bt-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.bt-badge { display: inline-flex; align-items: center; gap: 7px; padding: 4px 10px; border-radius: 999px; font-size: .74rem; font-weight: 750; letter-spacing: .01em; }
+.bt-badge.s-active { background: var(--bt-ok-bg); color: var(--bt-ok); }
+.bt-badge.s-paused { background: var(--bt-warn-bg); color: var(--bt-warn); }
+.bt-badge.s-done { background: var(--bt-done-bg); color: var(--bt-done); }
+.bt-pulse { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: bt-ring 1.8s ease-out infinite; }
+.bt-owner { display: inline-flex; align-items: center; gap: 5px; min-width: 0; font-size: .8rem; color: var(--bt-muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bt-card-title { margin: 0 !important; font-size: 1.18rem !important; font-weight: 800; letter-spacing: -.015em; line-height: 1.25;
+  color: var(--bt-text); overflow-wrap: anywhere; }
+.bt-card-cinema { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: .85rem; color: var(--bt-muted); min-width: 0; }
+.bt-card-cinema a { display: inline-flex; align-items: center; gap: 5px; min-width: 0; color: inherit !important; text-decoration: none !important; }
+.bt-card-cinema a:hover { color: var(--bt-brand) !important; }
+.bt-card-cinema a .bt-i { font-size: 12px; opacity: .7; }
+.bt-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.bt-tag { display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border-radius: 8px; border: 1px solid var(--bt-line);
+  background: var(--bt-surface-2); color: var(--bt-text); font-size: .78rem; font-weight: 650; }
+.bt-tag .bt-i { color: var(--bt-muted); }
+.bt-tag.warn { background: var(--bt-warn-bg); border-color: transparent; color: var(--bt-warn); }
+.bt-progress-top { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: .78rem; color: var(--bt-muted); }
+.bt-progress-top b { color: var(--bt-text); }
+.bt-bar { height: 6px; border-radius: 999px; background: var(--bt-surface-2); overflow: hidden; border: 1px solid var(--bt-line); }
+.bt-bar i { display: block; height: 100%; border-radius: inherit; background: var(--bt-grad); transition: width .4s ease; }
+.bt-last { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: 12px; background: var(--bt-surface-2);
+  font-size: .84rem; color: var(--bt-text); }
+.bt-last > .bt-i { font-size: 16px; margin-top: 2px; color: var(--bt-muted); }
+.bt-last b { display: block; font-weight: 700; }
+.bt-last small { display: block; margin-top: 1px; font-size: .76rem; color: var(--bt-muted); }
+.bt-last.hot { background: var(--bt-hot-bg); } .bt-last.hot > .bt-i, .bt-last.hot b { color: var(--bt-hot); }
+.bt-last.warn { background: var(--bt-warn-bg); } .bt-last.warn > .bt-i, .bt-last.warn b { color: var(--bt-warn); }
+.bt-chans { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: .78rem; color: var(--bt-muted); }
+.bt-chans > .bt-i { font-size: 14px; }
+.bt-chan { padding: 2px 8px; border-radius: 999px; background: var(--bt-surface-2); border: 1px solid var(--bt-line); font-weight: 650; color: var(--bt-text); }
+.bt-chan.none { color: var(--bt-err); }
+.bt-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; padding-top: 12px; border-top: 1px solid var(--bt-line); }
+.bt-actions .bt-btn.primary { flex: 1 1 auto; }
+.bt-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 48px 20px; text-align: center;
+  border: 1px dashed var(--bt-line); border-radius: 22px; background: var(--bt-surface); color: var(--bt-text); }
+.bt-empty h3 { margin: 8px 0 0 !important; font-size: 1.2rem; font-weight: 800; }
+.bt-empty p { margin: 0 0 10px !important; max-width: 380px; color: var(--bt-muted); }
+.bt-logo-lg { width: 64px; height: 64px; filter: drop-shadow(0 12px 24px rgba(249, 87, 58, .35)); }
+
+/* ---------- preview ---------- */
+#bt-preview:empty, #bt-add-result:empty { display: none; }
+.bt-preview { display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: 16px; border: 1px solid var(--bt-line); background: var(--bt-surface-2); }
+.bt-preview-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.bt-preview-head h3 { margin: 2px 0 0 !important; font-size: 1.05rem; font-weight: 800; color: var(--bt-text); }
+.bt-preview-head p { margin: 2px 0 0 !important; font-size: .84rem; color: var(--bt-muted); }
+.bt-eyebrow { display: flex; align-items: center; gap: 5px; font-size: .7rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--bt-brand); }
+.bt-preview-stats { display: flex; gap: 8px; }
+.bt-preview-stats span { display: flex; flex-direction: column; align-items: center; min-width: 74px; padding: 6px 10px; border-radius: 12px;
+  background: var(--bt-surface); border: 1px solid var(--bt-line); font-size: .72rem; color: var(--bt-muted); }
+.bt-preview-stats b { font-size: 1.1rem; color: var(--bt-text); }
+.bt-movie { display: flex; flex-direction: column; gap: 8px; }
+.bt-movie header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.bt-movie h4 { margin: 0 !important; font-size: .95rem; font-weight: 750; color: var(--bt-text); }
+.bt-pill { padding: 2px 8px; border-radius: 999px; background: var(--bt-hot-bg); color: var(--bt-hot); font-size: .7rem; font-weight: 750; }
+.bt-count { padding: 1px 7px; border-radius: 999px; background: var(--bt-surface); border: 1px solid var(--bt-line); color: var(--bt-muted); font-size: .72rem; font-weight: 650; }
+.bt-shows { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.bt-show { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--bt-line);
+  background: var(--bt-surface); color: var(--bt-text) !important; text-decoration: none !important; transition: border-color .15s, transform .15s, box-shadow .15s; }
+a.bt-show:hover { border-color: var(--bt-brand); transform: translateY(-1px); box-shadow: var(--bt-shadow); }
+.bt-show.match { border-color: color-mix(in srgb, var(--bt-brand) 45%, var(--bt-line)); }
+.bt-show.soldout { opacity: .55; }
+.bt-show-time { font-size: 1rem; font-weight: 800; letter-spacing: -.01em; }
+.bt-show-meta { font-size: .74rem; color: var(--bt-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bt-show-seats { display: flex; align-items: center; gap: 5px; font-size: .78rem; font-weight: 650; }
+.bt-show-seats .bt-i { color: var(--bt-muted); }
+.bt-seatbar { display: block; height: 4px; border-radius: 999px; background: var(--bt-surface-2); overflow: hidden; }
+.bt-seatbar i { display: block; height: 100%; border-radius: inherit; background: var(--bt-ok); }
+.bt-seatbar.low i { background: var(--bt-warn); }
+.bt-show-foot { display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-top: 2px; font-size: .74rem; color: var(--bt-muted); }
+.bt-book { display: inline-flex; align-items: center; gap: 3px; color: var(--bt-brand); font-weight: 750; }
+.bt-others { border-top: 1px solid var(--bt-line); padding-top: 10px; }
+.bt-others summary { display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 700; font-size: .88rem; color: var(--bt-muted); list-style: none; }
+.bt-others summary::-webkit-details-marker { display: none; }
+.bt-others summary::before { content: "›"; display: inline-block; font-size: 1.1rem; transition: transform .15s; }
+.bt-others[open] summary::before { transform: rotate(90deg); }
+.bt-others[open] > .bt-movie { margin-top: 12px; }
+
+/* ---------- activity ---------- */
+.bt-section-title h3 { margin: 0 !important; font-size: 1.05rem; font-weight: 750; color: var(--bt-text); }
+.bt-section-title p { margin: 2px 0 0 !important; font-size: .85rem; color: var(--bt-muted); }
+.bt-log-bar { align-items: center !important; }
+#bt-log { max-height: 560px; overflow: auto; padding: 6px !important; border: 1px solid var(--bt-line) !important;
+  border-radius: var(--bt-radius) !important; background: var(--bt-surface) !important; box-shadow: var(--bt-shadow); }
+.bt-log-list { list-style: none !important; margin: 0 !important; padding: 0 !important; font-family: var(--font-mono); font-size: .8rem; }
+.bt-log-row { display: grid; grid-template-columns: 128px 1fr; gap: 14px; margin: 0 !important; padding: 7px 10px !important; border-radius: 8px; line-height: 1.5; }
+.bt-log-row:hover { background: var(--bt-surface-2); }
+.bt-log-row time { color: var(--bt-muted); white-space: nowrap; }
+.bt-log-row span { color: var(--bt-text); overflow-wrap: anywhere; }
+.bt-log-row.hot { background: var(--bt-hot-bg); } .bt-log-row.hot span { color: var(--bt-hot); font-weight: 700; }
+.bt-log-row.warn span { color: var(--bt-warn); }
+.bt-log-row.ok span { color: var(--bt-ok); }
+.bt-log-row.info span { color: var(--bt-info); }
+.bt-log-row.muted span, .bt-log-row.sub span { color: var(--bt-muted); }
+.bt-log-row.sub span { padding-left: 16px; }
+.bt-log-empty { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 40px 16px; color: var(--bt-muted); font-family: var(--font-sans); }
+#bt-copy-log.is-copied { color: var(--bt-ok) !important; border-color: var(--bt-ok) !important; }
+
+/* ---------- confirm dialog (lives outside the app, so no media queries here) ---------- */
+.bt-shade { position: fixed; inset: 0; z-index: 9998; background: rgba(10, 11, 24, .45); backdrop-filter: blur(2px); animation: bt-fade .15s ease; }
+.bt-dialog { position: absolute; z-index: 9999; padding: 20px; border-radius: 18px; background: var(--bt-surface, #fff);
+  border: 1px solid var(--bt-line, #e8e8f0); color: var(--bt-text, #161729); font-family: var(--font, system-ui, sans-serif);
+  box-shadow: 0 24px 60px -20px rgba(10, 11, 24, .55); animation: bt-pop .16s ease; }
+.bt-dialog-icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 12px; background: var(--bt-err-bg, #ffe8ec); color: var(--bt-err, #c81e3a); font-size: 20px; }
+.bt-dialog h3 { margin: 12px 0 4px; font-size: 1.08rem; font-weight: 800; }
+.bt-dialog p { margin: 0; font-size: .9rem; line-height: 1.5; color: var(--bt-muted, #686a82); }
+.bt-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+@keyframes bt-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes bt-pop { from { opacity: 0; transform: translateY(6px) scale(.98); } to { opacity: 1; transform: none; } }
+
+/* ---------- footer ---------- */
+.bt-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 20px; margin-top: 8px;
+  padding: 18px 4px 4px; border-top: 1px solid var(--bt-line); color: var(--bt-muted); font-size: .85rem; }
+.bt-footer-brand { display: flex; align-items: center; gap: 8px; }
+.bt-footer-brand b { color: var(--bt-text); font-weight: 800; }
+.bt-logo-sm { width: 24px; height: 24px; }
+.bt-footer-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
+.bt-footer-meta a { display: inline-flex; align-items: center; gap: 7px; color: var(--bt-text) !important; font-weight: 650; text-decoration: none !important; }
+.bt-footer-meta a:hover { color: var(--bt-brand) !important; }
+.bt-footer-meta img { width: 22px; height: 22px; border-radius: 50%; margin: 0; }
+.bt-footer-meta .bt-gh-mark { width: 16px; height: 16px; }
+.bt-footer-note { flex-basis: 100%; margin: 0 !important; font-size: .78rem; }
+
+/* ---------- small screens ---------- */
+@media (max-width: 900px) {
+  .bt-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .bt-hero { padding: 18px; border-radius: 18px; }
+  .bt-logo { width: 46px; height: 46px; }
+  .bt-wordmark { font-size: 1.55rem; }
+  .bt-hero .bt-tagline { font-size: .9rem; }
+  .bt-stats { gap: 10px; }
+  .bt-stat { padding: 12px; gap: 10px; }
+  .bt-stat-icon { width: 34px; height: 34px; font-size: 16px; border-radius: 10px; }
+  .bt-stat-value { font-size: 1.15rem; }
+  .bt-mini { position: static; flex-basis: 100%; justify-content: center; }
+  .bt-stat-sub { white-space: normal; }
+  #bt-tabs > .tab-nav, #bt-channel-tabs > .tab-nav { flex-wrap: nowrap; }
+  #bt-tabs > .tab-nav { width: 100%; }
+  #bt-tabs > .tab-nav button { flex: 1 1 auto; padding: 8px 6px; font-size: .84rem; }
+  #bt-channel-tabs > .tab-nav button { padding: 6px 10px; font-size: .82rem; }
+  .bt-grid { grid-template-columns: 1fr; }
+  .bt-toolbar > .bt-btn { width: 100%; }
+  .bt-log-row { grid-template-columns: 1fr; gap: 0; }
+  .bt-shows { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .bt-preview { padding: 12px; }
+  .bt-dialog-actions .bt-btn { flex: 1; }
+}
+"""
+
+FAVICON = "data:image/svg+xml," + quote(logo_svg("fav", "x"))
+
+HEAD = f"""
+<link rel="icon" type="image/svg+xml" href="{FAVICON}">
+<meta name="theme-color" content="#12132a">
+<script>
+(() => {{
+  if (window.BookTick) return;
+  const BT = (window.BookTick = {{ queue: [] }});
+  const TRASH = '<svg class="bt-i" viewBox="0 0 24 24" aria-hidden="true">{ICONS["trash"]}</svg>';
+
+  // Buttons inside the HTML cards can't call Python directly. They queue
+  // "action:watcher_id" and click a hidden Gradio button that reads the queue.
+  BT.take = () => BT.queue.shift() || "";
+  BT.send = (action, id) => {{
+    BT.queue.push(action + ":" + (id || ""));
+    const btn = document.getElementById("bt-action-btn");
+    if (btn) btn.click();
+  }};
+
+  // Live regions (stats, watcher cards) are patched in place instead of being
+  // re-rendered, so a button never disappears under the pointer mid-click.
+  const morph = (a, b) => {{
+    if (a.nodeType !== b.nodeType || a.nodeName !== b.nodeName) {{ a.replaceWith(b.cloneNode(true)); return; }}
+    if (a.nodeType !== 1) {{ if (a.nodeValue !== b.nodeValue) a.nodeValue = b.nodeValue; return; }}
+    for (const at of Array.from(a.attributes)) if (!b.hasAttribute(at.name)) a.removeAttribute(at.name);
+    for (const at of Array.from(b.attributes)) if (a.getAttribute(at.name) !== at.value) a.setAttribute(at.name, at.value);
+    morphChildren(a, b);
+  }};
+  const morphChildren = (a, b) => {{
+    const old = Array.from(a.childNodes), next = Array.from(b.childNodes);
+    next.forEach((n, i) => {{ if (i < old.length) morph(old[i], n); else a.appendChild(n.cloneNode(true)); }});
+    for (let i = next.length; i < old.length; i++) old[i].remove();
+  }};
+  BT.render = (region, html, tries) => {{
+    const root = document.querySelector('.bt-live-root[data-region="' + region + '"]');
+    if (!root) {{
+      if ((tries || 0) < 50) setTimeout(() => BT.render(region, html, (tries || 0) + 1), 100);
+      return [];
+    }}
+    const tpl = document.createElement("template");
+    tpl.innerHTML = html || "";
+    morphChildren(root, tpl.content);
+    return [];
+  }};
+
+  BT.goto = (tab) => {{
+    const btn = document.getElementById("tab-" + tab + "-button");
+    if (btn) btn.click();
+    const tabs = document.getElementById("bt-tabs");
+    if (tabs && tabs.getBoundingClientRect().top < 0) tabs.scrollIntoView({{ behavior: "smooth", block: "start" }});
+  }};
+
+  // A small confirm dialog placed next to the button that opened it, so it stays
+  // in view even when Hugging Face stretches the app's frame to its full height.
+  BT.confirm = (anchor, title, message, okLabel) => new Promise((resolve) => {{
+    const shade = document.createElement("div");
+    shade.className = "bt-shade";
+    const box = document.createElement("div");
+    box.className = "bt-dialog";
+    box.setAttribute("role", "alertdialog");
+    box.setAttribute("aria-modal", "true");
+    box.innerHTML = '<div class="bt-dialog-icon">' + TRASH + '</div><h3></h3><p></p>' +
+      '<div class="bt-dialog-actions"><button type="button" class="bt-btn" data-x="no">Cancel</button>' +
+      '<button type="button" class="bt-btn danger-solid" data-x="yes"></button></div>';
+    box.querySelector("h3").textContent = title;
+    box.querySelector("p").textContent = message;
+    box.querySelector('[data-x="yes"]').textContent = okLabel;
+    const width = Math.min(380, window.innerWidth - 32);
+    box.style.width = width + "px";
+    box.style.left = (window.scrollX + Math.max(16, (window.innerWidth - width) / 2)) + "px";
+    document.body.appendChild(shade);
+    document.body.appendChild(box);
+    const r = anchor.getBoundingClientRect();
+    const top = window.scrollY + r.top + r.height / 2 - box.offsetHeight / 2;
+    box.style.top = Math.max(window.scrollY + 16, top) + "px";
+    const onKey = (e) => {{ if (e.key === "Escape") {{ e.preventDefault(); close(false); }} }};
+    const close = (ok) => {{
+      shade.remove(); box.remove();
+      document.removeEventListener("keydown", onKey, true);
+      if (document.body.contains(anchor)) anchor.focus();
+      resolve(ok);
+    }};
+    shade.addEventListener("click", () => close(false));
+    box.addEventListener("click", (e) => {{
+      const x = e.target.closest("[data-x]");
+      if (x) close(x.getAttribute("data-x") === "yes");
+    }});
+    document.addEventListener("keydown", onKey, true);
+    box.querySelector('[data-x="no"]').focus();
+  }});
+
+  BT.copyLog = () => {{
+    const rows = Array.from(document.querySelectorAll("#bt-log .bt-log-row"));
+    const text = rows.map((r) => r.getAttribute("data-line") || r.textContent).join("\\n");
+    const done = () => {{
+      const b = document.getElementById("bt-copy-log");
+      if (!b) return;
+      b.classList.add("is-copied");
+      setTimeout(() => b.classList.remove("is-copied"), 1600);
+    }};
+    const fallback = () => {{
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try {{ document.execCommand("copy"); }} catch (e) {{}}
+      ta.remove();
+      done();
+    }};
+    if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done, fallback);
+    else fallback();
+    return [];
+  }};
+
+  document.addEventListener("click", (e) => {{
+    const t = e.target instanceof Element ? e.target : null;
+    if (!t) return;
+    const filter = t.closest(".bt-chip[data-bt-filter]");
+    if (filter) {{
+      document.documentElement.setAttribute("data-bt-view", filter.getAttribute("data-bt-filter"));
+      return;
+    }}
+    const go = t.closest("[data-bt-goto]");
+    if (go) {{ e.preventDefault(); BT.goto(go.getAttribute("data-bt-goto")); return; }}
+    const a = t.closest("[data-bt-action]");
+    if (!a) return;
+    e.preventDefault();
+    const action = a.getAttribute("data-bt-action");
+    const id = a.getAttribute("data-bt-id") || "";
+    const card = a.closest(".bt-card");
+    const run = () => {{ if (card) card.classList.add("is-busy"); BT.send(action, id); }};
+    const ask = a.getAttribute("data-bt-confirm");
+    if (!ask) return run();
+    BT.confirm(a, a.getAttribute("data-bt-confirm-title") || "Are you sure?", ask,
+               a.getAttribute("data-bt-confirm-ok") || "Confirm").then((ok) => {{ if (ok) run(); }});
+  }});
+}})();
+</script>
+"""
 
 
 # ---------------------------------------------------------------------------
 # Layout
 # ---------------------------------------------------------------------------
-CSS = """
-.gradio-container { max-width: 1180px !important; margin: 0 auto !important; }
-.app-header h1 { font-size: 1.9rem; font-weight: 700; margin: 0 0 4px; }
-.app-header p { margin: 0; color: var(--body-text-color-subdued); font-size: 1rem; }
-.stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
-.stat-card { background: var(--block-background-fill); border: 1px solid var(--block-border-color);
-             border-radius: 14px; padding: 14px 16px; }
-.stat-label { font-size: .72rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
-              color: var(--body-text-color-subdued); }
-.stat-value { font-size: 1.4rem; font-weight: 700; margin: 4px 0 2px; color: var(--body-text-color); }
-.stat-sub { font-size: .8rem; color: var(--body-text-color-subdued); }
-.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; vertical-align: middle; }
-.dot.on { background: #22c55e; box-shadow: 0 0 0 4px rgba(34, 197, 94, .18); }
-.dot.off { background: #f59e0b; box-shadow: 0 0 0 4px rgba(245, 158, 11, .18); }
-.help-card { background: var(--block-background-fill); border: 1px solid var(--block-border-color);
-             border-radius: 14px; padding: 4px 18px 10px; }
-"""
+def live_region(region, html):
+    """A block whose content the browser patches in place (see BookTick.render in HEAD).
 
-HELP_MD = """
-### How it works
-1. **Find your cinema** on [district.in](https://www.district.in), open its page and copy the link.
-2. **Type the movie** and pick a format and date. Tap **Preview shows** to see what's listed right now.
-3. **Choose where to get alerts.** ntfy is quickest: install the app, subscribe to a topic, and enter the same topic here.
-4. **Send a test alert**, then **Start watching**.
+    Python never re-renders it. Fresh HTML goes into a hidden textbox, and its change
+    event hands the HTML to the page script.
+    """
+    gr.HTML(f'<div class="bt-live-root" data-region="{region}">{html}</div>', elem_classes="bt-root-html")
+    source = gr.Textbox(value=html, elem_classes="bt-hidden", show_label=False, container=False, max_lines=1)
+    source.change(None, inputs=[source], js=f"(h) => (window.BookTick ? window.BookTick.render('{region}', h) : [])")
+    return source
 
-When a matching show has seats, you get the number of alerts you chose, each with a link straight to seat selection. Then the watcher stops; re-arm it from the **Watchers** tab.
 
----
+with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=theme, css=CSS, head=HEAD) as demo:
+    gr.HTML(header_html(), elem_classes="bt-root-html")
+    status_box = live_region("status", status_html())
 
-**Tips**
-- Use a topic name nobody would guess, like `arun_tickets_982`. Anyone who knows it can read your alerts.
-- Watchers are wiped when this Space restarts or goes to sleep after a long time without visitors. If you're waiting days, check back now and then.
-- All times are Indian Standard Time.
-"""
-
-theme = gr.themes.Soft(
-    primary_hue="rose",
-    secondary_hue="slate",
-    neutral_hue="slate",
-    font=[gr.themes.GoogleFont("Inter"), "ui-sans-serif", "system-ui", "sans-serif"],
-)
-
-with gr.Blocks(title="District Ticket Monitor", theme=theme, css=CSS) as demo:
-    gr.HTML(
-        '<div class="app-header"><h1>🎟️ District Ticket Monitor</h1>'
-        "<p>Get a phone alert the moment tickets open for your movie on District.</p></div>"
-    )
-    status_box = gr.HTML(status_html())
-
-    with gr.Tabs():
+    with gr.Tabs(elem_id="bt-tabs"):
         # --- New watcher -----------------------------------------------------
-        with gr.Tab("➕ New watcher"):
+        with gr.Tab("New watcher", id="new", elem_id="tab-new"):
             with gr.Row(equal_height=False):
-                with gr.Column(scale=3):
-                    gr.Markdown("### 🎬 What to watch")
-                    cin_url_input = gr.Textbox(
-                        label="Cinema page on District",
-                        value=DEFAULT_URL,
-                        placeholder="https://www.district.in/movies/...",
-                        info="Open your cinema on district.in and copy the link from the address bar.",
-                    )
-                    with gr.Row():
+                with gr.Column(scale=3, min_width=340, elem_classes="bt-stack"):
+                    with gr.Column(elem_classes="bt-step"):
+                        gr.HTML(step_head("1", "Pick your show", "Paste your cinema's District link, then tell us what to look for."))
+                        cin_url_input = gr.Textbox(
+                            label="Cinema page on District",
+                            value=DEFAULT_URL,
+                            max_lines=1,
+                            placeholder="https://www.district.in/movies/...",
+                            info="Open your cinema on district.in and copy the link from the address bar.",
+                        )
                         movie_filter_input = gr.Textbox(
-                            label="Movie name", value="Ramayana", placeholder="e.g. Ramayana, Jailer 2",
-                            info="Part of the name is enough. Separate several with commas.", scale=2,
+                            label="Movie name", value="Ramayana", placeholder="e.g. Ramayana, Jailer 2", max_lines=1,
+                            info="Part of the name is enough. Separate several with commas.",
                         )
-                        format_filter_input = gr.Dropdown(
-                            label="Format", choices=FORMAT_CHOICES, value="IMAX", allow_custom_value=True, scale=1,
+                        with gr.Row():
+                            format_filter_input = gr.Dropdown(
+                                label="Format", choices=FORMAT_CHOICES, value="IMAX", allow_custom_value=True,
+                                info="Pick one or type your own.", min_width=160,
+                            )
+                            target_date_input = gr.Dropdown(
+                                label="Show date", choices=date_choices(), value=today_ist(), allow_custom_value=True,
+                                info="Or type a date like 2026-11-20.", min_width=200,
+                            )
+                        preview_btn = gr.Button("Preview shows on this date", variant="secondary")
+                        preview_out = gr.HTML(elem_id="bt-preview")
+
+                    with gr.Column(elem_classes="bt-step"):
+                        gr.HTML(step_head("2", "Where should we alert you?", "Fill in one or more. ntfy is the quickest to set up."))
+                        user_name_input = gr.Textbox(
+                            label="Your name", value="Me", placeholder="e.g. Arun", max_lines=1,
+                            info="Shown on the watcher card so you can spot yours.",
                         )
-                        target_date_input = gr.Dropdown(
-                            label="Show date", choices=date_choices(), value=today_ist(), allow_custom_value=True, scale=1,
+                        with gr.Tabs(elem_id="bt-channel-tabs"):
+                            with gr.Tab("ntfy (easiest)"):
+                                gr.HTML('<p class="bt-hint">Install the free <b>ntfy</b> app, tap <b>+</b> and subscribe to a topic. Enter the same topic here.</p>')
+                                ntfy_topic_input = gr.Textbox(label="ntfy topic", placeholder="e.g. arun_tickets_982", max_lines=1)
+                            with gr.Tab("Telegram"):
+                                gr.HTML('<p class="bt-hint">Create a bot with <b>@BotFather</b> and send it any message. Get your chat ID from <b>@userinfobot</b>.</p>')
+                                with gr.Row():
+                                    tg_token_input = gr.Textbox(label="Bot token", type="password", placeholder="123456:ABC-DEF…")
+                                    tg_chat_input = gr.Textbox(label="Chat ID", placeholder="123456789", max_lines=1)
+                            with gr.Tab("Discord"):
+                                gr.HTML('<p class="bt-hint">In your server: <b>Edit channel → Integrations → Webhooks → New webhook</b>, then copy its URL.</p>')
+                                disc_hook_input = gr.Textbox(label="Webhook URL", placeholder="https://discord.com/api/webhooks/…", max_lines=1)
+
+                    with gr.Column(elem_classes="bt-step"):
+                        gr.HTML(step_head("3", "When tickets open", "Choose how many alerts to get, send a test, then start watching."))
+                        max_alerts_slider = gr.Slider(
+                            label="Number of alerts", minimum=1, maximum=20, value=5, step=1,
+                            info="One alert per check until this many are sent, then the watcher stops.",
                         )
-                    preview_btn = gr.Button("🔍 Preview shows on this date", variant="secondary")
-                    preview_summary = gr.Markdown()
-                    preview_table = gr.Dataframe(
-                        headers=PREVIEW_HEADERS, interactive=False, wrap=True, visible=False, height=360,
-                    )
+                        with gr.Row(elem_classes="bt-cta-row"):
+                            test_notify_btn = gr.Button("Send test alert", variant="secondary", scale=1, min_width=150)
+                            add_task_btn = gr.Button("Start watching", variant="primary", scale=2, min_width=180)
+                        add_result_lbl = gr.HTML(elem_id="bt-add-result")
 
-                    gr.Markdown("### 📱 Where to alert you")
-                    user_name_input = gr.Textbox(label="Your name", value="Me", placeholder="e.g. Arun")
-                    with gr.Tabs():
-                        with gr.Tab("ntfy (easiest)"):
-                            gr.Markdown("Install the free **ntfy** app, tap **+** and subscribe to a topic. Enter the same topic here.")
-                            ntfy_topic_input = gr.Textbox(label="ntfy topic", placeholder="e.g. arun_tickets_982")
-                        with gr.Tab("Telegram"):
-                            gr.Markdown("Create a bot with **@BotFather** and send it any message. Get your chat ID from **@userinfobot**.")
-                            with gr.Row():
-                                tg_token_input = gr.Textbox(label="Bot token", type="password", placeholder="123456:ABC-DEF…")
-                                tg_chat_input = gr.Textbox(label="Chat ID", placeholder="123456789")
-                        with gr.Tab("Discord"):
-                            gr.Markdown("In your server: **Edit channel → Integrations → Webhooks → New webhook**, then copy its URL.")
-                            disc_hook_input = gr.Textbox(label="Webhook URL", placeholder="https://discord.com/api/webhooks/…")
-
-                    gr.Markdown("### 🚨 When tickets open")
-                    max_alerts_slider = gr.Slider(
-                        label="Number of alerts", minimum=1, maximum=20, value=5, step=1,
-                        info="One alert per check until this many are sent, then the watcher stops.",
-                    )
-                    with gr.Row():
-                        test_notify_btn = gr.Button("🔔 Send test alert", variant="secondary")
-                        add_task_btn = gr.Button("🚀 Start watching", variant="primary", scale=2)
-                    add_result_lbl = gr.Markdown()
-
-                with gr.Column(scale=2):
-                    gr.Markdown(HELP_MD, elem_classes="help-card")
+                with gr.Column(scale=2, min_width=300, elem_classes="bt-aside"):
+                    gr.HTML(HELP_HTML, elem_classes="bt-root-html")
 
         # --- Watchers --------------------------------------------------------
-        with gr.Tab("📋 Watchers") as watchers_tab:
-            tasks_table = gr.Dataframe(value=get_tasks_table(), headers=TABLE_HEADERS, interactive=False, wrap=True)
-            watcher_dd = gr.Dropdown(label="Choose a watcher to manage", choices=watcher_choices(), value=None)
-            with gr.Row():
-                pause_btn = gr.Button("⏯ Pause / resume")
-                rearm_btn = gr.Button("🔄 Re-arm alerts")
-                delete_btn = gr.Button("🗑️ Delete", variant="stop")
-            manage_status_lbl = gr.Markdown()
+        with gr.Tab("Watchers", id="watchers", elem_id="tab-watchers") as watchers_tab:
+            watchers_box = live_region("watchers", watchers_html())
 
         # --- Activity --------------------------------------------------------
-        with gr.Tab("📜 Activity"):
-            live_logs_box = gr.Textbox(
-                label="Activity log (newest first)", value=logs_text(), lines=22, max_lines=22,
-                interactive=False, show_copy_button=True,
-            )
-            clear_logs_btn = gr.Button("Clear log", size="sm")
+        with gr.Tab("Activity", id="activity", elem_id="tab-activity") as activity_tab:
+            with gr.Row(elem_classes="bt-log-bar"):
+                gr.HTML('<div class="bt-section-title"><h3>Activity log</h3><p>Newest first: every check result, alert and change.</p></div>')
+                copy_log_btn = gr.Button("Copy log", size="sm", elem_id="bt-copy-log", scale=0, min_width=110)
+                clear_logs_btn = gr.Button("Clear log", size="sm", scale=0, min_width=110)
+            log_box = gr.HTML(logs_html(), elem_id="bt-log")
 
         # --- Settings --------------------------------------------------------
-        with gr.Tab("⚙️ Settings"):
-            gr.Markdown("### Engine\nThese settings apply to every watcher on this Space.")
-            interval_slider = gr.Slider(
-                label="Check every (seconds)", minimum=5, maximum=60, step=5, value=app_state["interval_sec"],
-                info="Very frequent checks can get the Space blocked by District.",
-            )
-            toggle_engine_btn = gr.Button("⏯ Pause / resume all checking")
-            settings_status = gr.Markdown()
+        with gr.Tab("Settings", id="settings", elem_id="tab-settings"):
+            with gr.Row(equal_height=False):
+                with gr.Column(scale=3, min_width=320, elem_classes="bt-step"):
+                    gr.HTML(step_head(icon("activity"), "Engine", "These settings apply to every watcher on this Space."))
+                    engine_note = gr.HTML(engine_note_html())
+                    interval_slider = gr.Slider(
+                        label="Check every (seconds)", minimum=5, maximum=60, step=5, value=app_state["interval_sec"],
+                        info="Very frequent checks can get the Space blocked by District.",
+                    )
+                    toggle_engine_btn = gr.Button("Pause all checking", variant="secondary")
+                with gr.Column(scale=2, min_width=280):
+                    gr.HTML(about_html(), elem_classes="bt-root-html")
+
+    gr.HTML(footer_html(), elem_classes="bt-root-html")
+
+    # Hidden bridge for the buttons rendered inside HTML (see BookTick.send in HEAD).
+    action_box = gr.Textbox(elem_id="bt-action", elem_classes="bt-hidden", show_label=False, container=False)
+    action_btn = gr.Button("Run action", elem_id="bt-action-btn", elem_classes="bt-hidden")
 
     # --- Events ---------------------------------------------------------------
     preview_btn.click(
         preview_shows,
         inputs=[cin_url_input, movie_filter_input, format_filter_input, target_date_input],
-        outputs=[preview_summary, preview_table],
+        outputs=[preview_out],
     )
     test_notify_btn.click(
         test_user_notification,
@@ -1014,24 +1985,30 @@ with gr.Blocks(title="District Ticket Monitor", theme=theme, css=CSS) as demo:
         add_new_watcher,
         inputs=[user_name_input, cin_url_input, movie_filter_input, format_filter_input, target_date_input,
                 max_alerts_slider, ntfy_topic_input, tg_token_input, tg_chat_input, disc_hook_input],
-        outputs=[add_result_lbl, tasks_table, watcher_dd],
+        outputs=[add_result_lbl, watchers_box, status_box],
     )
 
-    manage_outputs = [manage_status_lbl, tasks_table, watcher_dd]
-    pause_btn.click(toggle_watcher, inputs=[watcher_dd], outputs=manage_outputs)
-    rearm_btn.click(rearm_watcher, inputs=[watcher_dd], outputs=manage_outputs)
-    delete_btn.click(delete_watcher, inputs=[watcher_dd], outputs=manage_outputs)
-    watchers_tab.select(refresh_watchers, inputs=[watcher_dd], outputs=[tasks_table, watcher_dd], show_progress="hidden")
+    action_btn.click(
+        run_watcher_action,
+        inputs=[action_box],
+        outputs=[watchers_box, status_box, engine_note, toggle_engine_btn],
+        js="(v) => (window.BookTick ? window.BookTick.take() : '')",
+        show_progress="hidden",
+        trigger_mode="multiple",
+    )
+    watchers_tab.select(watchers_html, outputs=[watchers_box], show_progress="hidden")
+    activity_tab.select(logs_html, outputs=[log_box], show_progress="hidden")
 
-    clear_logs_btn.click(clear_logs, outputs=[live_logs_box], show_progress="hidden")
-    toggle_engine_btn.click(toggle_engine, outputs=[settings_status, status_box])
-    interval_slider.release(change_interval, inputs=[interval_slider], outputs=[settings_status, status_box])
+    copy_log_btn.click(None, js="() => (window.BookTick ? window.BookTick.copyLog() : [])")
+    clear_logs_btn.click(clear_logs, outputs=[log_box], show_progress="hidden")
+    toggle_engine_btn.click(toggle_engine, outputs=[engine_note, toggle_engine_btn, status_box, watchers_box])
+    interval_slider.release(change_interval, inputs=[interval_slider], outputs=[engine_note, status_box])
 
     timer = gr.Timer(3)
-    timer.tick(poll_status, outputs=[status_box, tasks_table, live_logs_box], show_progress="hidden")
+    timer.tick(poll_status, outputs=[status_box, watchers_box, log_box], show_progress="hidden")
     demo.load(
         on_page_load,
-        outputs=[target_date_input, interval_slider, tasks_table, watcher_dd, status_box],
+        outputs=[target_date_input, interval_slider, watchers_box, status_box, engine_note, toggle_engine_btn, log_box],
         show_progress="hidden",
     )
 
