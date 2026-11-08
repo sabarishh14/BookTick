@@ -403,6 +403,135 @@ def parse_district_shows(url):
 
 
 # ---------------------------------------------------------------------------
+# District directory: cities, their cinemas, and what each cinema is showing
+# ---------------------------------------------------------------------------
+CITY_SITEMAP_URL = "https://cdn.district.in/sitemap/sitemap-cinema-city.xml"
+DEFAULT_CITY = "chennai"
+DEFAULT_CINEMA_LABEL = "INOX Phoenix Market City (formerly Jazz Cinemas), Velachery"
+POPULAR_CITIES = [
+    "chennai", "bengaluru", "mumbai", "new-delhi", "hyderabad", "kolkata", "pune", "ahmedabad", "kochi",
+    "coimbatore", "gurgaon", "noida", "jaipur", "lucknow", "chandigarh", "vizag", "madurai", "trivandrum",
+    "mysuru", "indore",
+]
+_cache = {}
+_cache_lock = threading.Lock()
+
+
+def cached(key, ttl, loader, fallback=None, retry_after=300):
+    """Return a cached value, reloading it after `ttl` seconds.
+
+    If a reload fails, keep serving the last good value (or `fallback`) and try again
+    after `retry_after` seconds. With nothing to fall back on, the error is raised.
+    """
+    with _cache_lock:
+        hit = _cache.get(key)
+    if hit and hit[0] > time.time():
+        return hit[1]
+    try:
+        value, expires = loader(), time.time() + ttl
+    except Exception:
+        value = hit[1] if hit else fallback
+        if value is None:
+            raise
+        expires = time.time() + retry_after
+    with _cache_lock:
+        _cache[key] = (expires, value)
+    return value
+
+
+def dig(node, *keys):
+    for key in keys:
+        node = node.get(key) if isinstance(node, dict) else None
+    return node
+
+
+def next_data(page):
+    match = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', page, re.DOTALL)
+    return json.loads(match.group(1)) if match else {}
+
+
+def slugify(text):
+    return re.sub(r"[^a-z0-9]+", "-", str(text).lower()).strip("-") or "cinema"
+
+
+def city_label(key):
+    return str(key or "").replace("-", " ").title()
+
+
+def load_cities():
+    """Every city District lists cinemas for, from its public sitemap."""
+    keys = set(re.findall(r"/movies/cinemas-in-([a-z0-9-]+)\s*</loc>", fetch_html(CITY_SITEMAP_URL)))
+    if not keys:
+        raise ValueError("no cities found in District's sitemap")
+    return sorted(keys)
+
+
+def city_choices():
+    keys = set(cached("cities", 24 * 3600, load_cities, fallback=POPULAR_CITIES))
+    top = [k for k in POPULAR_CITIES if k in keys]
+    rest = sorted((k for k in keys if k not in top), key=city_label)
+    return [(city_label(k), k) for k in top + rest]
+
+
+def load_city_cinemas(city):
+    """Read District's 'cinemas in <city>' page: each cinema's link, address and movies."""
+    page = fetch_html(f"https://www.district.in/movies/cinemas-in-{city}")
+    rails = dig(next_data(page), "props", "pageProps", "data", "serverState", "EDSResponse", "rails") or []
+    links = {cid: path for path, cid in re.findall(r"(/movies/[a-z0-9-]+-CD(\d+))", page)}
+    cinemas = {}
+    for rail in rails:
+        for item in rail.get("items") or []:
+            info = dig(item, "ItemDetails", "CinemaData") or {}
+            cid, name = str(info.get("cinema_id") or ""), info.get("cinema_name")
+            if not cid or not name or cid in cinemas:
+                continue
+            movies = [dig(child, "ItemDetails", "MovieData", "name") for child in item.get("children") or []]
+            cinemas[cid] = {
+                "id": cid,
+                "name": name,
+                "address": info.get("address") or "",
+                "amenities": list(info.get("amenities") or info.get("attributes") or []),
+                # District takes the cinema's display name from the link, so prefer its own links.
+                "url": "https://www.district.in" + links.get(cid, f"/movies/{slugify(name)}-CD{cid}"),
+                "movies": list(dict.fromkeys(m for m in movies if m)),
+            }
+    if not cinemas:
+        raise ValueError("District's page didn't list any cinemas")
+    return sorted(cinemas.values(), key=lambda c: c["name"].lower())
+
+
+def city_cinemas(city):
+    city = str(city or "").strip().lower()
+    if not re.fullmatch(r"[a-z0-9-]{1,60}", city):
+        raise ValueError("Pick a city from the list")
+    return cached(f"cinemas:{city}", 30 * 60, lambda: load_city_cinemas(city))
+
+
+def cinema_id_from_url(url):
+    match = re.search(r"-CD(\d+)", str(url or ""), re.I)
+    return match.group(1) if match else None
+
+
+def cinema_label(cinema, city):
+    """'PVR Grand Mall, Velachery, Chennai' -> 'PVR Grand Mall, Velachery' (the city is already picked)."""
+    return re.sub(rf",\s*{re.escape(city_label(city))}\s*$", "", cinema["name"], flags=re.I) or cinema["name"]
+
+
+def movie_choices(cinemas, cinema=None):
+    """This cinema's movies first, then everything else showing in the city."""
+    here = list(cinema["movies"]) if cinema else []
+    elsewhere = sorted({m for c in cinemas for m in c["movies"]} - set(here), key=str.lower)
+    return here + elsewhere
+
+
+def movie_text(value):
+    """The movie picker returns a list; watchers store the names comma-separated."""
+    if isinstance(value, (list, tuple)):
+        return ", ".join(str(v).strip() for v in value if str(v).strip())
+    return str(value or "").strip()
+
+
+# ---------------------------------------------------------------------------
 # Matching
 # ---------------------------------------------------------------------------
 def split_keywords(text):
@@ -754,8 +883,8 @@ HELP_HTML = f"""
 <aside class="bt-help">
   <h3>How it works</h3>
   <ol class="bt-steps">
-    <li><b>Find your cinema</b><span>Open it on <a href="https://www.district.in" target="_blank" rel="noopener noreferrer">district.in</a> and copy the link from the address bar.</span></li>
-    <li><b>Pick the movie, format and date</b><span>Tap <em>Preview shows</em> to see what's listed right now.</span></li>
+    <li><b>Pick your city and cinema</b><span>Every cinema on <a href="https://www.district.in" target="_blank" rel="noopener noreferrer">District</a> is listed. You can also paste a cinema's link.</span></li>
+    <li><b>Pick the movie, format and date</b><span>Bookings not open yet? Type the movie's name. Tap <em>Preview shows</em> to see what's listed right now.</span></li>
     <li><b>Choose where to get alerts</b><span>ntfy is quickest: install the app, subscribe to a topic, and enter the same topic here.</span></li>
     <li><b>Send a test, then start watching</b><span>When a matching show has seats, you get the alerts you chose, each with a link straight to seat selection. Then the watcher stops; re-arm it from <em>Watchers</em>.</span></li>
   </ol>
@@ -1034,11 +1163,98 @@ def clean_channels(ntfy, tg_token, tg_chat, discord):
     return {"ntfy_topic": ntfy, "telegram_token": tg_token, "telegram_chat_id": tg_chat, "discord_webhook": discord}, None
 
 
+NO_CINEMA_HELP = "Pick a cinema from the list, or paste its link from district.in."
+
+
+def hint(text):
+    return f'<div class="bt-hint-line">{icon("info")}<span>{text}</span></div>'
+
+
+def cinema_card(cinema):
+    if not cinema:
+        return ""
+    href = safe_href(cinema["url"])
+    link = (f'<a class="bt-cinema-link" href="{href}" target="_blank" rel="noopener noreferrer">'
+            f'Open on District{icon("external")}</a>') if href else ""
+    amenities = "".join(f'<span class="bt-tag">{esc(a)}</span>' for a in cinema["amenities"][:6])
+    showing = plural(len(cinema["movies"]), "movie") + " showing now" if cinema["movies"] else "Nothing showing right now"
+    return (f'<div class="bt-cinema"><div class="bt-cinema-top">{icon("pin")}<div><b>{esc(cinema["address"] or cinema["name"])}</b>'
+            f'<small>{showing}</small></div>{link}</div>'
+            + (f'<div class="bt-tags">{amenities}</div>' if amenities else "") + "</div>")
+
+
+def movie_update(cinemas, cinema, picked):
+    """New movie suggestions that keep the movies already picked.
+
+    Gradio 4.44 remembers multiselect picks by their position in the list, so the picks
+    are sent again with the new list. Otherwise they would shift onto other movies.
+    """
+    picked = [m for m in (picked or []) if str(m).strip()]
+    return gr.update(choices=movie_choices(cinemas, cinema), value=picked)
+
+
+def on_city_change(city, picked):
+    """New city: list its cinemas. The cinema has to be picked again."""
+    try:
+        cinemas = city_cinemas(city)
+    except Exception as e:
+        info = callout("err", f"Couldn't load cinemas in {esc(city_label(city))}",
+                       f"{esc(str(e))}. You can paste a cinema link below instead.")
+        return gr.update(choices=[], value=None), gr.update(), info, gr.update(open=True), ""
+    choices = [(cinema_label(c, city), c["url"]) for c in cinemas]
+    info = hint(f"{plural(len(cinemas), 'cinema')} in {esc(city_label(city))}. Pick one to see what it's showing.")
+    return gr.update(choices=choices, value=None), movie_update(cinemas, None, picked), info, gr.update(), ""
+
+
+def on_cinema_change(city, url, picked):
+    """Cinema picked: use its link and put its movies at the top of the movie list."""
+    if not url:
+        return "", gr.update(), ""
+    try:
+        cinemas = city_cinemas(city)
+    except Exception:
+        cinemas = []
+    cinema = next((c for c in cinemas if c["url"] == url), None)
+    return url, movie_update(cinemas, cinema, picked), cinema_card(cinema)
+
+
+def on_link_input(url, city, picked):
+    """A pasted link: select that cinema in the list when it's in the chosen city."""
+    cid = cinema_id_from_url(url)
+    try:
+        cinemas = city_cinemas(city)
+    except Exception:
+        cinemas = []
+    cinema = next((c for c in cinemas if cid and c["id"] == cid), None)
+    if cinema:
+        return gr.update(value=cinema["url"]), movie_update(cinemas, cinema, picked), cinema_card(cinema)
+    clean = clean_cinema_url(url)
+    info = hint(f"Using the pasted link: <b>{esc(cinema_name_from_url(clean))}</b>") if clean else ""
+    return gr.update(value=None), gr.update(), info
+
+
+def load_directory(city, url, picked):
+    """On page load: fill the city list, that city's cinemas, and the movie suggestions."""
+    city = city or DEFAULT_CITY
+    cities = gr.update(choices=city_choices(), value=city)
+    try:
+        cinemas = city_cinemas(city)
+    except Exception as e:
+        info = callout("warn", "Couldn't load the cinema list right now",
+                       f"{esc(str(e))}. The link below still works.")
+        return cities, gr.update(), gr.update(), info
+    cid = cinema_id_from_url(url)
+    cinema = next((c for c in cinemas if cid and c["id"] == cid), None)
+    choices = [(cinema_label(c, city), c["url"]) for c in cinemas]
+    return (cities, gr.update(choices=choices, value=cinema["url"] if cinema else None),
+            movie_update(cinemas, cinema, picked), cinema_card(cinema))
+
+
 def preview_shows(cin_url, movie_names, fmt_val, date_val):
+    movie_names = movie_text(movie_names)
     url = clean_cinema_url(cin_url)
     if not url:
-        return callout("err", "That doesn't look like a District cinema link",
-                       "Open your cinema on district.in and copy the link from the address bar.")
+        return callout("err", "Which cinema?", NO_CINEMA_HELP)
     date = normalize_date(date_val)
     if not date:
         return callout("err", "Check the date", "It should look like 2026-11-20.")
@@ -1101,10 +1317,10 @@ def test_user_notification(user_name, cin_url, ntfy_top, tg_tok, tg_chat, disc_u
 
 def add_new_watcher(user_name, cin_url, movie_names, fmt_val, date_val, max_alerts_val, ntfy_top, tg_tok, tg_chat, disc_url):
     keep = gr.update()
+    movie_names = movie_text(movie_names)
     url = clean_cinema_url(cin_url)
     if not url:
-        return callout("err", "Paste a cinema page link from district.in",
-                       "Open your cinema on district.in and copy the link from the address bar."), keep, keep
+        return callout("err", "Which cinema?", NO_CINEMA_HELP), keep, keep
     date = normalize_date(date_val)
     if not date:
         return callout("err", "Check the date", "It should look like 2026-11-20."), keep, keep
@@ -1456,6 +1672,24 @@ CSS = """
   background: transparent; color: var(--bt-muted); font-weight: 650; font-size: .86rem; }
 #bt-channel-tabs > .tab-nav button.selected { background: var(--bt-surface); color: var(--bt-text); box-shadow: 0 1px 3px rgba(18, 19, 42, .14); }
 #bt-channel-tabs > .tabitem { padding: 12px 0 0 !important; border: none !important; background: transparent !important; }
+.bt-cinema { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border-radius: 14px;
+  background: var(--bt-surface-2); border: 1px solid var(--bt-line); }
+.bt-cinema-top { display: flex; align-items: flex-start; gap: 10px; font-size: .85rem; }
+.bt-cinema-top > .bt-i { font-size: 16px; margin-top: 2px; color: var(--bt-brand); }
+.bt-cinema-top b { display: block; font-weight: 600; color: var(--bt-text); line-height: 1.4; }
+.bt-cinema-top small { display: block; margin-top: 2px; font-size: .78rem; color: var(--bt-muted); }
+.bt-cinema-link { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; flex: none; white-space: nowrap;
+  color: var(--bt-brand) !important; font-weight: 700; font-size: .8rem; text-decoration: none !important; }
+.bt-cinema-link:hover { text-decoration: underline !important; }
+.bt-cinema .bt-tag { font-weight: 600; font-size: .74rem; }
+#bt-city input, #bt-cinema-pick input { padding-right: 28px !important; text-overflow: ellipsis; }
+.bt-hint-line { display: flex; align-items: center; gap: 8px; font-size: .84rem; color: var(--bt-muted); }
+.bt-hint-line .bt-i { font-size: 15px; color: var(--bt-info); }
+.bt-hint-line b { color: var(--bt-text); }
+.bt-accordion { padding: 0 !important; border: 1px dashed var(--bt-line) !important; border-radius: 12px !important; background: transparent !important; }
+.bt-accordion > .label-wrap { padding: 10px 14px !important; font-size: .86rem; font-weight: 650; color: var(--bt-muted); }
+.bt-accordion > .label-wrap:hover { color: var(--bt-text); }
+.bt-accordion > div:not(.label-wrap) { padding: 0 14px 14px !important; }
 .bt-hint { margin: 0 0 10px !important; font-size: .86rem; color: var(--bt-muted); }
 .bt-hint b { color: var(--bt-text); }
 .bt-cta-row { gap: 10px !important; }
@@ -1699,6 +1933,9 @@ a.bt-show:hover { border-color: var(--bt-brand); transform: translateY(-1px); bo
   .bt-stat-value { font-size: 1.15rem; }
   .bt-mini { position: static; flex-basis: 100%; justify-content: center; }
   .bt-stat-sub { white-space: normal; }
+  .bt-cinema-top { flex-wrap: wrap; }
+  .bt-cinema-top > div { flex: 1 1 calc(100% - 30px); }
+  .bt-cinema-link { margin-left: 26px; }
   #bt-tabs > .tab-nav, #bt-channel-tabs > .tab-nav { flex-wrap: nowrap; }
   #bt-tabs > .tab-nav { width: 100%; }
   #bt-tabs > .tab-nav button { flex: 1 1 auto; padding: 8px 6px; font-size: .84rem; }
@@ -1881,17 +2118,21 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
             with gr.Row(equal_height=False):
                 with gr.Column(scale=3, min_width=340, elem_classes="bt-stack"):
                     with gr.Column(elem_classes="bt-step"):
-                        gr.HTML(step_head("1", "Pick your show", "Paste your cinema's District link, then tell us what to look for."))
-                        cin_url_input = gr.Textbox(
-                            label="Cinema page on District",
-                            value=DEFAULT_URL,
-                            max_lines=1,
-                            placeholder="https://www.district.in/movies/...",
-                            info="Open your cinema on district.in and copy the link from the address bar.",
-                        )
-                        movie_filter_input = gr.Textbox(
-                            label="Movie name", value="Ramayana", placeholder="e.g. Ramayana, Jailer 2", max_lines=1,
-                            info="Part of the name is enough. Separate several with commas.",
+                        gr.HTML(step_head("1", "Pick your show", "Choose your city and cinema, then the movie you're waiting for."))
+                        with gr.Row():
+                            city_input = gr.Dropdown(
+                                label="City", choices=[(city_label(DEFAULT_CITY), DEFAULT_CITY)], value=DEFAULT_CITY,
+                                info="Type to search 790+ cities.", scale=2, min_width=180, elem_id="bt-city",
+                            )
+                            cinema_input = gr.Dropdown(
+                                label="Cinema", choices=[(DEFAULT_CINEMA_LABEL, DEFAULT_URL)], value=DEFAULT_URL,
+                                info="Type part of the name or the area.", scale=3, min_width=240, elem_id="bt-cinema-pick",
+                            )
+                        cinema_info = gr.HTML(elem_classes="bt-root-html")
+                        movie_filter_input = gr.Dropdown(
+                            label="Movie", choices=["Ramayana"], value=["Ramayana"], multiselect=True, allow_custom_value=True, elem_id="bt-movie",
+                            info="Movies at this cinema come first, then the rest of the city. Not listed yet? "
+                                 "Type the name and press Enter. Part of a name is enough.",
                         )
                         with gr.Row():
                             format_filter_input = gr.Dropdown(
@@ -1901,6 +2142,14 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
                             target_date_input = gr.Dropdown(
                                 label="Show date", choices=date_choices(), value=today_ist(), allow_custom_value=True,
                                 info="Or type a date like 2026-11-20.", min_width=200,
+                            )
+                        with gr.Accordion("Or paste a cinema link", open=False, elem_classes="bt-accordion") as link_accordion:
+                            cin_url_input = gr.Textbox(
+                                label="Cinema page on District",
+                                value=DEFAULT_URL,
+                                max_lines=1,
+                                placeholder="https://www.district.in/movies/...",
+                                info="For a cinema that isn't in the list: open it on district.in and copy the link from the address bar.",
                             )
                         preview_btn = gr.Button("Preview shows on this date", variant="secondary")
                         preview_out = gr.HTML(elem_id="bt-preview")
@@ -1971,6 +2220,18 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
     action_btn = gr.Button("Run action", elem_id="bt-action-btn", elem_classes="bt-hidden")
 
     # --- Events ---------------------------------------------------------------
+    city_input.input(
+        on_city_change, inputs=[city_input, movie_filter_input],
+        outputs=[cinema_input, movie_filter_input, cinema_info, link_accordion, cin_url_input],
+    )
+    cinema_input.input(
+        on_cinema_change, inputs=[city_input, cinema_input, movie_filter_input],
+        outputs=[cin_url_input, movie_filter_input, cinema_info], show_progress="hidden",
+    )
+    cin_url_input.input(
+        on_link_input, inputs=[cin_url_input, city_input, movie_filter_input],
+        outputs=[cinema_input, movie_filter_input, cinema_info], show_progress="hidden", trigger_mode="always_last",
+    )
     preview_btn.click(
         preview_shows,
         inputs=[cin_url_input, movie_filter_input, format_filter_input, target_date_input],
@@ -2009,6 +2270,12 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
     demo.load(
         on_page_load,
         outputs=[target_date_input, interval_slider, watchers_box, status_box, engine_note, toggle_engine_btn, log_box],
+        show_progress="hidden",
+    )
+    # Separate so a slow District page never holds up the live status above.
+    demo.load(
+        load_directory, inputs=[city_input, cin_url_input, movie_filter_input],
+        outputs=[city_input, cinema_input, movie_filter_input, cinema_info],
         show_progress="hidden",
     )
 

@@ -26,7 +26,7 @@ jobs:
           COMMIT_MSG: ${{ github.event.head_commit.message || 'Sync from GitHub' }}
         run: |
           # 1. Clone the Hugging Face Space to a temporary folder
-          git clone https://sabarishhh14:${HF_TOKEN}@huggingface.co/spaces/sabarishhh14/BookTrack hf-space
+          git clone https://sabarishhh14:${HF_TOKEN}@huggingface.co/spaces/sabarishhh14/BookTick hf-space
 
           # 2. Copy the app files into the Space
           # (Only these files, so anything that exists only on the Space is left alone)

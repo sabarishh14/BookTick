@@ -18,7 +18,8 @@ BookTick checks a District cinema page in the background, around the clock. When
 
 ## Features
 
-- Watch any District cinema for one or more movies, in a format you choose (IMAX, 4DX, 3D, 2D or your own) on a date you choose.
+- Pick your city (790+ on District) and cinema from a list, or paste a cinema's link.
+- Watch for one or more movies, including ones whose bookings haven't opened yet, in a format you choose (IMAX, 4DX, 3D, 2D or your own) on a date you choose.
 - Preview what's listed right now, with seats left, prices and booking links.
 - Get alerts through ntfy, Telegram or Discord, and send a test alert first.
 - Manage each watcher from its own card: pause, resume, re-arm, send a test, or delete (with a confirmation).
