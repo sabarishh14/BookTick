@@ -3,6 +3,7 @@ import re
 import json
 import time
 import uuid
+import tempfile
 import threading
 import urllib.request
 import html as html_lib
@@ -801,10 +802,14 @@ def icon(name, cls=""):
 
 
 def logo_svg(uid, cls="bt-logo"):
-    """The BookTick mark: a ticket with a tick. `uid` keeps gradient ids unique on the page."""
+    """The BookTick mark: a ticket with a tick. `uid` keeps gradient ids unique on the page.
+
+    The xmlns is ignored inline, but without it the browser won't draw the SVG as an image
+    (the favicon).
+    """
     g = f"btg-{uid}"
     return (
-        f'<svg class="{cls}" viewBox="0 0 48 48" aria-hidden="true">'
+        f'<svg xmlns="http://www.w3.org/2000/svg" class="{cls}" viewBox="0 0 48 48" aria-hidden="true">'
         f'<defs><linearGradient id="{g}" x1="0" y1="0" x2="1" y2="1">'
         '<stop offset="0" stop-color="#FF6B4A"/><stop offset="1" stop-color="#F43F7A"/></linearGradient></defs>'
         f'<rect width="48" height="48" rx="14" fill="url(#{g})"/>'
@@ -2093,7 +2098,23 @@ a.bt-show:hover { border-color: var(--bt-brand); transform: translateY(-1px); bo
 }
 """
 
-FAVICON = "data:image/svg+xml," + quote(logo_svg("fav", "x"))
+FAVICON_SVG = logo_svg("fav", "bt-favicon")  # the same mark as the header logo
+FAVICON = "data:image/svg+xml," + quote(FAVICON_SVG)
+
+
+def favicon_file():
+    """Write the favicon to disk so Gradio serves it at /favicon.ico instead of its own logo.
+
+    Browsers ask for /favicon.ico before the page script adds the <link> in HEAD, and
+    bookmarks and link previews only ever use that address.
+    """
+    path = os.path.join(tempfile.gettempdir(), "booktick-favicon.svg")
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(FAVICON_SVG)
+        return path
+    except OSError:
+        return None
 
 # The light/dark switch in the header. Gradio picks the theme itself when the page loads
 # (and again when the system theme changes), so a saved choice is re-applied on top of it.
@@ -2658,4 +2679,4 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
 
 # --- Launch -------------------------------------------------------------------
 start_engine()
-demo.queue(default_concurrency_limit=8).launch(server_name="0.0.0.0", server_port=7860)
+demo.queue(default_concurrency_limit=8).launch(server_name="0.0.0.0", server_port=7860, favicon_path=favicon_file())
