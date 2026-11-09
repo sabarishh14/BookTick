@@ -137,28 +137,42 @@ def lowest_price(areas):
 
 
 def session_booking_url(session, content_id, fallback):
-    """Deep link to the seat picker for one show (same format District uses)."""
+    """Deep link to the seat picker for one show.
+
+    District shows "Booking is now closed" unless the movie's format code is in the path and
+    ends the session id, and the show's date is included. City pages call that code "mcd", and
+    their own encSessionId ends in the cinema's id instead, so it can't be used as it is.
+    """
     s = session
-    if s.get("encSessionId"):
-        enc = s["encSessionId"]
-        # City pages leave out "fid"; it's the last part of the encoded session id.
-        fid = str(s.get("fid") or enc.rsplit("-", 1)[-1])
-    elif all(s.get(k) for k in ("cid", "sid", "mid", "fid")):
-        fid = str(s["fid"]).lower()
+    fid = str(s.get("fid") or s.get("mcd") or "").lower()
+    if not fid:
+        return fallback
+    if all(s.get(k) for k in ("cid", "sid", "mid")):
         enc = f"{s['cid']}-{s['sid']}-{str(s['mid']).lower()}-{fid}"
+    elif s.get("encSessionId"):
+        enc = s["encSessionId"]
     else:
         return fallback
-    url = f"https://www.district.in/movies/seat-layout/{fid}?encsessionid={enc}&freeseating=false&fromsessions=true&type=CINEMAS"
+    start = parse_time(s.get("showTime"), naive_is_utc=True)
+    date = f"&fromdate={start.strftime('%Y-%m-%d')}" if start else ""
+    url = f"https://www.district.in/movies/seat-layout/{fid}?encsessionid={enc}{date}&freeseating=false&fromsessions=true&type=CINEMAS"
     if content_id:
         url += f"&contentid={content_id}"
     return url
 
 
-def make_show(session, title, cinema, content_id, fallback_url, fmt=None):
+def cinema_page_url(entity_url):
+    """City pages link a cinema as /<slug>-c/<id>; its own page is /movies/<slug>-CD<id>."""
+    match = re.fullmatch(r"/(.+)-c/(\d+)", str(entity_url or ""))
+    return f"https://www.district.in/movies/{match.group(1)}-CD{match.group(2)}" if match else None
+
+
+def make_show(session, title, cinema, content_id, fallback_url, fmt=None, cinema_url=None):
     s = session
     return {
         "title": title,
         "cinema": cinema,
+        "cinema_url": cinema_url,
         "format": s.get("scrnFmt") or fmt or s.get("premiumLabel") or "2D",
         # District's session times are UTC with no timezone marker.
         "start": parse_time(s.get("showTime"), naive_is_utc=True),
@@ -198,6 +212,7 @@ def parse_cinema_page(page, url):
     real_names = [dig(block, "meta", "cinema", "name") for block in (data.get("serverState") or {}).values()
                   if isinstance(block, dict)]
     cinema_name = next((n for n in real_names if n), None) or data.get("cinemaName") or cinema_name_from_url(url)
+    cinema_url = url.split("?")[0]
     shows = []
 
     # 1. Live session data (has seat counts)
@@ -207,7 +222,7 @@ def parse_cinema_page(page, url):
         movie = lookup.get(str(s.get("mid"))) or lookup.get(str(s.get("contentId"))) or {}
         title = movie.get("name") or f"{s.get('lang', '')} movie".strip()
         shows.append(make_show(s, title, cinema_name, movie.get("content_id") or s.get("contentId"), url,
-                               movie.get("format")))
+                               movie.get("format"), cinema_url))
 
     # 2. Schema.org events (backup source, carries District's own booking links)
     for block in re.findall(r'<script type="application/ld\+json"[^>]*>(.*?)</script>', page, re.DOTALL):
@@ -234,6 +249,7 @@ def parse_cinema_page(page, url):
             shows.append({
                 "title": title,
                 "cinema": cinema_name,
+                "cinema_url": cinema_url,
                 "format": ev.get("videoFormat") or ("IMAX" if "IMAX" in name else "3D" if "3D" in name else "2D"),
                 "start": start,
                 "audi": "",
@@ -258,8 +274,9 @@ def parse_city_movie_page(page, url):
         content_id = movie.get("content_id")
         for cinema in block.get("arrangedSessions") or []:
             name = cinema.get("entityName") or "Cinema"
+            cinema_url = cinema_page_url(cinema.get("entityUrl"))
             for s in cinema.get("sessions") or []:
-                shows.append(make_show(s, movie_name or "Movie", name, content_id, url))
+                shows.append(make_show(s, movie_name or "Movie", name, content_id, url, cinema_url=cinema_url))
     return movie_name, sort_shows(shows)
 
 

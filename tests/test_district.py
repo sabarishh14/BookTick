@@ -74,7 +74,7 @@ class CityMoviePage(unittest.TestCase):
         self.assertGreater(len(shows), 0)
         for show in shows:
             self.assertTrue(show["cinema"])
-            self.assertIn("/movies/seat-layout/", show["url"])
+            self.assertRegex(show["url"], r"/movies/seat-layout/([^?]+)\?encsessionid=[^&]+-\1&fromdate=" + META["date"])
             self.assertEqual(show["start"].strftime("%Y-%m-%d"), META["date"])
 
 
@@ -85,11 +85,18 @@ class Links(unittest.TestCase):
             "https://www.district.in/movies/scene-movie-tickets-in-chennai-MV233181?fromdate=2026-11-09")
         self.assertIsNone(district.city_movie_url("https://www.district.in/movies/something-else", "chennai"))
 
-    def test_booking_link_without_fid(self):
-        # City pages leave out "fid"; it's the last part of the encoded session id.
-        url = district.session_booking_url({"encSessionId": "1037033-35388__1__1-obcqr6-1037033"}, 233181, "x")
-        self.assertTrue(url.startswith("https://www.district.in/movies/seat-layout/1037033?encsessionid=1037033-35388"))
-        self.assertTrue(url.endswith("&contentid=233181"))
+    def test_city_page_booking_link(self):
+        # City pages have "mcd" instead of "fid", and an encSessionId ending in the cinema's id.
+        # That id in the link makes District say "Booking is now closed".
+        session = {"cid": 1037033, "sid": "35388__1__1", "mid": "OBCQR6", "mcd": "42vo6x7qxpo",
+                   "encSessionId": "1037033-35388__1__1-obcqr6-1037033", "showTime": "2026-11-10T06:00"}
+        self.assertEqual(
+            district.session_booking_url(session, 233181, "x"),
+            "https://www.district.in/movies/seat-layout/42vo6x7qxpo?encsessionid=1037033-35388__1__1-obcqr6-42vo6x7qxpo"
+            "&fromdate=2026-11-10&freeseating=false&fromsessions=true&type=CINEMAS&contentid=233181")
+
+    def test_booking_link_needs_the_format_code(self):
+        self.assertEqual(district.session_booking_url({"encSessionId": "1-2-3-4"}, 1, "fallback"), "fallback")
 
     def test_clean_cinema_url(self):
         self.assertEqual(district.clean_cinema_url("www.district.in/movies/x-CD1"), "https://www.district.in/movies/x-CD1")

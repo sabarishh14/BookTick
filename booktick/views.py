@@ -230,7 +230,7 @@ HELP_HTML = f"""
     <li><b>Pick your city and cinema</b><span>Every cinema on <a href="https://www.district.in" target="_blank" rel="noopener noreferrer">District</a> is listed. Pick <em>Any cinema</em> to hear the moment your movie opens anywhere in the city.</span></li>
     <li><b>Pick the movie, format, time and dates</b><span>Bookings not open yet? Type the movie's name. Tap <em>Preview shows</em> to see what's listed right now.</span></li>
     <li><b>Choose where to get alerts</b><span>ntfy is quickest: install the app, subscribe to a topic, and enter the same topic here.</span></li>
-    <li><b>Send a test, then start watching</b><span>When a matching show has seats, you get the alerts you chose, each with a link straight to seat selection. Then the watcher stops; re-arm it from <em>Watchers</em>.</span></li>
+    <li><b>Send a test, then start watching</b><span>When a matching show has seats, you get the alerts you chose. Tap one to open the theatre's page. Then the watcher stops; re-arm it from <em>Watchers</em>.</span></li>
   </ol>
   <h4>Good to know</h4>
   <ul class="bt-tips">

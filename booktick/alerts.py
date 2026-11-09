@@ -7,6 +7,7 @@ import requests
 
 from .config import APP_NAME, BRAND_DISCORD_COLOR
 from .core import fmt_price, fmt_when, now_ist, redact, seats_text, shorten
+from .district import query_url
 
 
 def response_error(res):
@@ -29,6 +30,20 @@ def show_lines(shows, limit=5):
     return lines
 
 
+def alert_links(show):
+    """[(label, link), ...] for an alert, the one to open on tap first.
+
+    The District app opens cinema pages but sends seat-selection links to its home screen,
+    so the cinema page comes first. The seat link still goes straight to the seat map in a
+    browser, for anyone without the app.
+    """
+    seats = show["url"]
+    if not show.get("cinema_url"):
+        return [("Open on District", seats)]
+    date = show["start"].strftime("%Y-%m-%d") if show.get("start") else None
+    return [("Open cinema", query_url(show["cinema_url"], date)), ("Seat map (web)", seats)]
+
+
 def send_task_notification(task, shows, place, alert_idx=1, max_alerts=1, test=False):
     """Send to every channel on the task. `place` is the cinema, or "Cinemas in <city>".
 
@@ -42,6 +57,8 @@ def send_task_notification(task, shows, place, alert_idx=1, max_alerts=1, test=F
     headline = f"🧪 Test alert from {APP_NAME}" if test else f"🚨 {counter}Tickets open: {' / '.join(titles)}"
     intro = "Your alerts work. A real alert will look like this:" if test else f"{len(shows)} matching show(s) have seats right now."
     lines = show_lines(shows)
+    links = alert_links(first)
+    open_link = links[0][1]
     results = []
 
     # 1. ntfy.sh
@@ -56,8 +73,7 @@ def send_task_notification(task, shows, place, alert_idx=1, max_alerts=1, test=F
                     "message": "\n".join([intro, f"🎬 {movie}", f"🏛️ {place}", ""] + lines),
                     "priority": 5,
                     "tags": ["test_tube"] if test else ["rotating_light", "ticket"],
-                    "click": first["url"],
-                    "actions": [{"action": "view", "label": "Book seats", "url": first["url"]}],
+                    "click": open_link,  # tapping the notification opens the theatre page
                 },
                 timeout=10,
             )
@@ -73,7 +89,7 @@ def send_task_notification(task, shows, place, alert_idx=1, max_alerts=1, test=F
         text = "\n".join(
             [f"<b>{esc(headline)}</b>", "", esc(intro), f"🎬 <b>{esc(movie)}</b>", f"🏛️ {esc(place)}", ""]
             + [esc(line) for line in lines]
-            + ["", f'👉 <a href="{esc(first["url"], quote=True)}"><b>Book seats now</b></a>']
+            + ["", "👉 " + " · ".join(f'<a href="{esc(link, quote=True)}"><b>{esc(label)}</b></a>' for label, link in links)]
         )
         try:
             res = requests.post(
@@ -90,9 +106,10 @@ def send_task_notification(task, shows, place, alert_idx=1, max_alerts=1, test=F
     if discord_url:
         embed = {
             "title": headline,
-            "url": first["url"],
+            "url": open_link,
             "color": 0x6366F1 if test else BRAND_DISCORD_COLOR,
-            "description": "\n".join([intro, f"**{movie}**", place, ""] + lines),
+            "description": "\n".join([intro, f"**{movie}**", place, ""] + lines
+                                     + ["", " · ".join(f"[{label}]({link})" for label, link in links)]),
             "footer": {"text": APP_NAME},
         }
         content = "🧪 Test alert" if test else "@everyone 🔥 Tickets are open!"
