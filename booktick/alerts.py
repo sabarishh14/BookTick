@@ -1,5 +1,6 @@
 """Sending alerts: ntfy, Telegram and Discord."""
 import html as html_lib
+import json
 from datetime import timedelta
 from urllib.parse import urlparse
 
@@ -165,6 +166,53 @@ def send_task_notification(task, shows, place, kind="opened", count=1, max_alert
             # Error text can echo the webhook path, which contains its secret token.
             results.append(("Discord", False, redact(e, discord_url, urlparse(discord_url).path)))
 
+    return results
+
+
+def send_seatmap(task, show, place, png, free, total, image_link):
+    """The follow-up to an opening alert: a picture of the seats as bookings opened."""
+    when = fmt_when(show.get("start"))
+    title = f"🗺️ Seat map: {show.get('title', '')} · {when}"
+    caption = f"{free} of {total} seats free as bookings opened. 🏛️ {place} · {show.get('format', '')}"
+    links = alert_links(show)
+    results = []
+
+    topic = (task.get("ntfy_topic") or "").strip()
+    if topic and image_link:  # ntfy shows images from a link, so it needs BookTick's public address
+        try:
+            res = requests.post("https://ntfy.sh", json={
+                "topic": topic, "title": title, "message": caption, "priority": 4, "tags": ["seat"],
+                "attach": image_link, "filename": "seatmap.png", "click": links[0][1],
+            }, timeout=10)
+            results.append(("ntfy", res.ok, "sent" if res.ok else response_error(res)))
+        except Exception as e:
+            results.append(("ntfy", False, str(e)))
+
+    tg_token = (task.get("telegram_token") or "").strip()
+    tg_chat = (task.get("telegram_chat_id") or "").strip()
+    if tg_token and tg_chat:
+        esc = html_lib.escape
+        text = f"<b>{esc(title)}</b>\n{esc(caption)}\n👉 " + " · ".join(
+            f'<a href="{esc(link, quote=True)}">{esc(label)}</a>' for label, link in links)
+        try:
+            res = requests.post(f"https://api.telegram.org/bot{tg_token}/sendPhoto",
+                                data={"chat_id": tg_chat, "caption": text[:1024], "parse_mode": "HTML"},
+                                files={"photo": ("seatmap.png", png, "image/png")}, timeout=20)
+            results.append(("Telegram", res.ok, "sent" if res.ok else response_error(res)))
+        except Exception as e:
+            results.append(("Telegram", False, redact(e, tg_token)))
+
+    discord_url = (task.get("discord_webhook") or "").strip()
+    if discord_url:
+        embed = {"title": title, "url": links[0][1], "description": caption, "color": BRAND_DISCORD_COLOR,
+                 "image": {"url": "attachment://seatmap.png"}, "footer": {"text": APP_NAME}}
+        try:
+            res = requests.post(discord_url, data={"payload_json": json.dumps({"embeds": [embed]})},
+                                files={"files[0]": ("seatmap.png", png, "image/png")}, timeout=20)
+            ok = res.status_code in (200, 204)
+            results.append(("Discord", ok, "sent" if ok else response_error(res)))
+        except Exception as e:
+            results.append(("Discord", False, redact(e, discord_url, urlparse(discord_url).path)))
     return results
 
 

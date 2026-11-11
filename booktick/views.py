@@ -2,7 +2,7 @@
 import html as html_lib
 import re
 
-from . import access, district, engine
+from . import access, district, engine, seatmap
 from .config import (ADMIN_KEY, APP_NAME, APP_TAGLINE, AUTHOR_NAME, DATABASE_URL, GITHUB_AVATAR, GITHUB_URL,
                      GITHUB_USER, MAX_RANGE_DAYS, TIME_SLOTS)
 from .core import (ago, date_is_past, dates_label, fmt_clock, fmt_price, logs_for, plural, shorten, state, task_dates,
@@ -354,6 +354,15 @@ def place_html(task):
     return f'{icon("pin")}{inner}'
 
 
+def seatmap_link(task):
+    """A link to the seat map taken when bookings last opened, while the image is still kept."""
+    image_id = task.get("seatmap_id")
+    if not image_id or not seatmap.image(image_id):
+        return ""
+    return (f'<a class="bt-seatmap" href="/seatmap/{esc(image_id)}.png" target="_blank" rel="noopener noreferrer">'
+            f'{icon("seat")}Seat map when bookings opened · {esc(task.get("seatmap_at") or "")}{icon("external")}</a>')
+
+
 def watcher_card(task_id, t, session):
     status = t.get("status", "")
     label, tone, group = STATUS_META.get(status, (status or "Unknown", "paused", "finished"))
@@ -421,6 +430,7 @@ def watcher_card(task_id, t, session):
   </div>
   <div class="bt-tags">{"".join(tags)}</div>
   <div class="bt-phase {phase_tone}"><span>{esc(phase)}</span><b>{plural(sent, "alert")} sent</b></div>
+  {seatmap_link(t)}
   {last_html}
   <div class="bt-chans">{icon("bell")}{channel_chips(t)}</div>
   <div class="bt-actions">{"".join(actions)}</div>

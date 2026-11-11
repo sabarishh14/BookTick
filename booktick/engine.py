@@ -11,9 +11,9 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
-from . import district
+from . import district, seatmap
 from .actions import new_token
-from .alerts import describe_results, send_task_notification
+from .alerts import describe_results, send_seatmap, send_task_notification
 from .config import (CITY_LIST_MAX_AGE, FETCH_WORKERS, KEEP_FINISHED_DAYS, MAX_BACKOFF, MAX_BLOCK_BACKOFF,
                      MORE_SEATS_GAP, MORE_SEATS_MIN, TIME_SLOTS)
 from .core import (add_log, dates_label, now_ist, plural, shorten, state, task_dates, tasks_lock, to_date,
@@ -181,6 +181,29 @@ def check_task(task, page, date, place, shows):
     results = send_task_notification(snapshot, alert_shows, place_name, kind=event, count=count,
                                      max_alerts=max_alerts, reason=reason, date=date)
     add_log(f"   [{name}] {describe_results(results)}", owners)
+    if event in ("opened", "reopened"):
+        request_seatmap(snapshot, alert_shows, place_name)
+
+
+def request_seatmap(task, shows, place):
+    """Ask for a picture of the first matching show's seats. It follows the opening alert a few
+    seconds later, so the alert itself is never held up."""
+    show = next((s for s in shows if "/seat-layout/" in s.get("url", "")), None)
+    if show:
+        seatmap.request(task, show, place, seatmap_ready)
+
+
+def seatmap_ready(task, show, place, image_id):
+    hit = seatmap.image(image_id)
+    if not hit:
+        return
+    with tasks_lock:
+        live = state["tasks"].get(task.get("id"))
+        if live:
+            live.update(seatmap_id=image_id, seatmap_at=now_ist().strftime("%I:%M %p").lstrip("0"))
+    results = send_seatmap(task, show, place, hit["png"], hit["free"], hit["total"], seatmap.image_url(image_id))
+    add_log(f"🗺️ [{task.get('user_label', 'Watcher')}] seat map as bookings opened: {hit['free']} of {hit['total']} "
+            f"seats free. {describe_results(results)}", owners_of(task))
 
 
 def check_city_list(job, directory):

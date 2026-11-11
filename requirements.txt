@@ -3,3 +3,4 @@ starlette<0.38.0
 requests>=2.31.0
 beautifulsoup4>=4.12.0
 psycopg[binary]>=3.1,<4
+playwright==1.47.0

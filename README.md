@@ -21,6 +21,7 @@ A Python and Gradio app that watches [District](https://www.district.in) around 
 - **Movie, format, dates and show times**: several movies at once (including ones whose bookings haven't opened), IMAX / 4DX / 3D / 2D or your own format, one day or up to 7 in a row from a calendar, and morning / afternoon / evening / night
 - **Live preview**: everything listed right now, with seats left, prices and booking links, grouped by cinema for a city-wide watch
 - **Alerts**: ntfy, Telegram and Discord, and a test alert before you start. You hear when bookings open (plus reminders), when they close again, when they reopen and when seats free up
+- **Seat map when bookings open**: a few seconds after the opening alert, a picture of the show's seats (free and sold or blocked, row by row), taken as a guest with no login
 - **Answer from the alert**: ntfy alerts have **Booked it, stop watching** and **Got it, keep watching** buttons; Telegram and Discord alerts link to a page with the same two
 - **Private watchers**: each browser sees and manages only its own; **Copy my link** opens them on another device
 - **Watcher cards**: pause, resume, re-arm, send a test, or delete, and filter by status. Watchers stop by themselves once their dates pass
@@ -86,6 +87,8 @@ Every push to `main` that changes `app.py`, `booktick/`, `requirements.txt` or `
 
 1. Add a repository secret named `HF_TOKEN`: a Hugging Face access token with write access to the Space
 2. Add `DATABASE_URL` and `ADMIN_KEY` as secrets on the Space (see steps 2 and 3)
+
+Seat maps need a browser on the server: `packages.txt` installs Chromium on the Space, and `playwright` (in `requirements.txt`) drives it. Locally on Windows, BookTick uses Microsoft Edge; anywhere else, set `CHROMIUM_PATH`. Without a browser, alerts are sent without seat maps.
 
 The buttons in alerts call the Space at its public address, which Hugging Face provides as `SPACE_HOST`. Anywhere else, set `PUBLIC_URL` to the address people reach the app at; without it, alerts are sent without buttons.
 

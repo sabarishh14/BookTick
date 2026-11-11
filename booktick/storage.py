@@ -16,7 +16,7 @@ from .core import add_log, plural, redact, save_needed, shorten, state, tasks_lo
 
 # Rewritten on every check and meaningless after a restart, so they aren't stored.
 UNSTORED_KEYS = ("last_checked", "last_checked_ts", "last_result", "last_alert_ts", "last_more_ts",
-                 "page_seats", "expected_pages")
+                 "page_seats", "expected_pages", "seatmap_id", "seatmap_at")  # seat map images live in memory
 # What the database holds right now (in stored_form), so only changes get written.
 _db = {"ready": False, "stored": {}}
 

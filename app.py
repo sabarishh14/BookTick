@@ -9,6 +9,7 @@ import gradio as gr
 
 from booktick import handlers as h
 from booktick.actions import register as register_actions
+from booktick.seatmap import register as register_seatmap
 from booktick.config import (APP_NAME, DEFAULT_CINEMA_LABEL, DEFAULT_CITY, DEFAULT_URL, FORMAT_CHOICES,
                              MAX_INTERVAL, MIN_INTERVAL)
 from booktick.core import state, today_ist
@@ -270,4 +271,5 @@ start_engine()
 demo.queue(default_concurrency_limit=8).launch(server_name="0.0.0.0", server_port=7860, favicon_path=favicon_file(),
                                                prevent_thread_lock=True)
 register_actions(demo.app)  # the addresses the buttons in alerts call (see booktick/actions.py)
+register_seatmap(demo.app)  # seat map images (see booktick/seatmap.py)
 demo.block_thread()

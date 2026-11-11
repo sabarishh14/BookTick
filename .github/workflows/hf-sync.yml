@@ -10,6 +10,7 @@ on:
       - 'app.py'
       - 'booktick/**'
       - 'requirements.txt'
+      - 'packages.txt'
       - 'README.md'
   workflow_dispatch:
 
@@ -32,7 +33,7 @@ jobs:
           # 2. Copy the app files into the Space
           # (Only these files, so anything that exists only on the Space is left alone.
           # The booktick/ folder is replaced whole, so deleted modules don't linger.)
-          cp app.py requirements.txt README.md hf-space/
+          cp app.py requirements.txt packages.txt README.md hf-space/
           rm -rf hf-space/booktick
           cp -r booktick hf-space/
           find hf-space/booktick -name "__pycache__" -type d -prune -exec rm -rf {} +

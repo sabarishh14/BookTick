@@ -540,6 +540,10 @@ a.bt-show:hover { border-color: var(--bt-brand); transform: translateY(-1px); bo
 .bt-phase b { color: var(--bt-text); font-weight: 650; white-space: nowrap; }
 .bt-phase.open span { color: var(--bt-hot); font-weight: 700; }
 .bt-phase.closed span { color: var(--bt-warn); font-weight: 650; }
+.bt-seatmap { display: inline-flex; align-items: center; gap: 6px; font-size: .8rem; font-weight: 650;
+  color: var(--bt-brand) !important; text-decoration: none !important; }
+.bt-seatmap:hover { text-decoration: underline !important; }
+.bt-seatmap .bt-i { font-size: 14px; }
 
 /* ---------- watchers toolbar ---------- */
 .bt-toolbar-actions { display: flex; flex-wrap: wrap; gap: 8px; }
