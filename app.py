@@ -6,8 +6,6 @@ storage.py saves them, access.py decides who can see and change what, views.py a
 handlers.py build the page, and static/ holds its CSS and JS.
 """
 import gradio as gr
-import uvicorn
-from fastapi import FastAPI
 
 from booktick import handlers as h
 from booktick.actions import register as register_actions
@@ -266,11 +264,10 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
     ).then(None, js=f"() => ({JS} ? {JS}.booted() : [])")  # runs even if loading failed
 
 # --- Launch -------------------------------------------------------------------
-# The page runs inside a FastAPI app so the buttons in alerts have somewhere to call
-# (see booktick/actions.py).
 start_storage()
 start_engine()
-server = FastAPI()
-register_actions(server)
-server = gr.mount_gradio_app(server, demo.queue(default_concurrency_limit=8), path="/", favicon_path=favicon_file())
-uvicorn.run(server, host="0.0.0.0", port=7860)
+# launch() must start the app: ZeroGPU Spaces only accept apps started that way.
+demo.queue(default_concurrency_limit=8).launch(server_name="0.0.0.0", server_port=7860, favicon_path=favicon_file(),
+                                               prevent_thread_lock=True)
+register_actions(demo.app)  # the addresses the buttons in alerts call (see booktick/actions.py)
+demo.block_thread()
