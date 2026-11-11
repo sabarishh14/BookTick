@@ -15,7 +15,7 @@ from . import district, seatmap
 from .actions import new_token
 from .alerts import describe_results, send_seatmap, send_task_notification
 from .config import (CITY_LIST_MAX_AGE, FETCH_WORKERS, KEEP_FINISHED_DAYS, MAX_BACKOFF, MAX_BLOCK_BACKOFF,
-                     MORE_SEATS_GAP, MORE_SEATS_MIN, TIME_SLOTS)
+                     MAX_SEATMAPS, MORE_SEATS_GAP, MORE_SEATS_MIN, TIME_SLOTS)
 from .core import (add_log, dates_label, now_ist, plural, shorten, state, task_dates, tasks_lock, to_date,
                    today_ist, wake_engine)
 from .storage import save_tasks
@@ -186,11 +186,17 @@ def check_task(task, page, date, place, shows):
 
 
 def request_seatmap(task, shows, place):
-    """Ask for a picture of the first matching show's seats. It follows the opening alert a few
-    seconds later, so the alert itself is never held up."""
-    show = next((s for s in shows if "/seat-layout/" in s.get("url", "")), None)
-    if show:
+    """Ask for a picture of each matching show's seats, earliest first (up to MAX_SEATMAPS).
+
+    They follow the opening alert one by one, a few seconds apart, so the alert itself is
+    never held up.
+    """
+    with_maps = [s for s in shows if "/seat-layout/" in s.get("url", "")]
+    for show in with_maps[:MAX_SEATMAPS]:
         seatmap.request(task, show, place, seatmap_ready)
+    if len(with_maps) > MAX_SEATMAPS:
+        add_log(f"🗺️ [{task.get('user_label', 'Watcher')}] seat maps for the first {MAX_SEATMAPS} of "
+                f"{len(with_maps)} shows only.", owners_of(task))
 
 
 def seatmap_ready(task, show, place, image_id):

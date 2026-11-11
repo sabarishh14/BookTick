@@ -31,6 +31,7 @@ MAX_RANGE_DAYS = 7           # longest date range one watcher can cover
 KEEP_FINISHED_DAYS = 7       # finished watchers are removed this many days after their last date
 MORE_SEATS_MIN = 10          # seats a show must gain before a "more seats" alert (or any, if it was sold out)
 MORE_SEATS_GAP = 900         # at least this many seconds between "more seats" alerts for one watcher
+MAX_SEATMAPS = 8             # seat maps sent when bookings open: one per matching show, earliest first
 
 # --- Limits (admins are exempt) -------------------------------------------------
 MAX_WATCHERS_PER_PERSON = 5   # open watchers (watching or paused) per browser

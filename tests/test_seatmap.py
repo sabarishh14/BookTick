@@ -88,13 +88,22 @@ class Engine(unittest.TestCase):
         mock.patch.stopall()
         state["tasks"] = {}
 
-    def test_a_snapshot_follows_bookings_opening_only(self):
-        show = dict(SHOW, start=datetime.strptime(today_ist() + " 18:00", "%Y-%m-%d %H:%M").replace(tzinfo=IST))
-        engine.check_task(self.task, "p", today_ist(), "PVR", [show])     # opened
+    def show_at(self, hour, n):
+        start = datetime.strptime(f"{today_ist()} {hour:02d}:00", "%Y-%m-%d %H:%M").replace(tzinfo=IST)
+        return dict(SHOW, start=start, url=f"{SHOW['url']}-{n}")
+
+    def test_every_show_gets_a_seat_map_when_bookings_open(self):
+        shows = [self.show_at(10, 1), self.show_at(14, 2), self.show_at(18, 3)]
+        engine.check_task(self.task, "p", today_ist(), "PVR", shows)      # opened
         self.task["last_alert_ts"] = 0
-        engine.check_task(self.task, "p", today_ist(), "PVR", [show])     # nothing new
-        self.assertEqual(self.request.call_count, 1)
-        self.assertEqual(self.request.call_args.args[1]["url"], SHOW["url"])
+        engine.check_task(self.task, "p", today_ist(), "PVR", shows)      # nothing new: no more maps
+        self.assertEqual([c.args[1]["url"] for c in self.request.call_args_list], [s["url"] for s in shows])
+
+    def test_seat_maps_are_capped(self):
+        shows = [self.show_at(6 + i, i) for i in range(engine.MAX_SEATMAPS + 3)]
+        engine.check_task(self.task, "p", today_ist(), "PVR", shows)
+        self.assertEqual(self.request.call_count, engine.MAX_SEATMAPS)
+        self.assertEqual(self.request.call_args_list[0].args[1]["url"], shows[0]["url"])  # earliest first
 
 
 class FollowUp(unittest.TestCase):
@@ -106,6 +115,9 @@ class FollowUp(unittest.TestCase):
         ntfy, telegram, discord = post.call_args_list
         self.assertEqual(ntfy.kwargs["json"]["attach"], "https://booktick.example/seatmap/a.png")
         self.assertIn("100 of 442 seats free", ntfy.kwargs["json"]["message"])
+        self.assertNotIn("click", ntfy.kwargs["json"])  # only for looking at: tapping opens nothing
+        self.assertNotIn("<a ", telegram.kwargs["data"]["caption"])
+        self.assertNotIn('"url"', discord.kwargs["data"]["payload_json"].replace('"url": "attachment', ""))
         self.assertTrue(telegram.args[0].endswith("/sendPhoto"))
         self.assertEqual(telegram.kwargs["files"]["photo"][1], b"PNG")
         self.assertIn("attachment://seatmap.png", discord.kwargs["data"]["payload_json"])
