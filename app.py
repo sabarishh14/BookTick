@@ -6,8 +6,11 @@ storage.py saves them, access.py decides who can see and change what, views.py a
 handlers.py build the page, and static/ holds its CSS and JS.
 """
 import gradio as gr
+import uvicorn
+from fastapi import FastAPI
 
 from booktick import handlers as h
+from booktick.actions import register as register_actions
 from booktick.config import (APP_NAME, DEFAULT_CINEMA_LABEL, DEFAULT_CITY, DEFAULT_URL, FORMAT_CHOICES,
                              MAX_INTERVAL, MIN_INTERVAL)
 from booktick.core import state, today_ist
@@ -130,8 +133,9 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
                     with gr.Column(elem_classes="bt-step"):
                         gr.HTML(step_head("3", "When tickets open", "Choose how many alerts to get, send a test, then start watching."))
                         max_alerts_slider = gr.Slider(
-                            label="Number of alerts", minimum=1, maximum=20, value=5, step=1,
-                            info="One alert per check until this many are sent, then the watcher stops.",
+                            label="Alerts when bookings open", minimum=1, maximum=20, value=5, step=1,
+                            info="The first alert plus reminders, one per check, until you tap a button in one. "
+                                 "After that, BookTick still tells you if seats free up or bookings close and reopen.",
                         )
                         with gr.Row(elem_classes="bt-cta-row"):
                             test_notify_btn = gr.Button("Send test alert", variant="secondary", scale=1, min_width=150)
@@ -262,6 +266,11 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
     ).then(None, js=f"() => ({JS} ? {JS}.booted() : [])")  # runs even if loading failed
 
 # --- Launch -------------------------------------------------------------------
+# The page runs inside a FastAPI app so the buttons in alerts have somewhere to call
+# (see booktick/actions.py).
 start_storage()
 start_engine()
-demo.queue(default_concurrency_limit=8).launch(server_name="0.0.0.0", server_port=7860, favicon_path=favicon_file())
+server = FastAPI()
+register_actions(server)
+server = gr.mount_gradio_app(server, demo.queue(default_concurrency_limit=8), path="/", favicon_path=favicon_file())
+uvicorn.run(server, host="0.0.0.0", port=7860)

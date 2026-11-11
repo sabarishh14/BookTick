@@ -12,8 +12,10 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
 from . import district
+from .actions import new_token
 from .alerts import describe_results, send_task_notification
-from .config import CITY_LIST_MAX_AGE, FETCH_WORKERS, KEEP_FINISHED_DAYS, MAX_BACKOFF, MAX_BLOCK_BACKOFF, TIME_SLOTS
+from .config import (CITY_LIST_MAX_AGE, FETCH_WORKERS, KEEP_FINISHED_DAYS, MAX_BACKOFF, MAX_BLOCK_BACKOFF,
+                     MORE_SEATS_GAP, MORE_SEATS_MIN, TIME_SLOTS)
 from .core import (add_log, dates_label, now_ist, plural, shorten, state, task_dates, tasks_lock, to_date,
                    today_ist, wake_engine)
 from .storage import save_tasks
@@ -83,49 +85,102 @@ def set_result(task, page, result):
         add_log(f"[{task.get('user_label', 'Watcher')}] {task_place(task)}: {result}", owners_of(task))
 
 
+def seat_counts(shows):
+    """{show link: seats left}. A show with seats but no count (from Schema.org) counts as 1."""
+    return {s["url"]: (1 if s["avail"] is None else s["avail"]) for s in shows}
+
+
+def gained_seats(before, show):
+    """Did this show get seats since the last check: new, back from sold out, or MORE_SEATS_MIN more?"""
+    was = before.get(show["url"])
+    if was is None:
+        return True
+    if show["avail"] is None:
+        return False
+    return (was == 0 < show["avail"]) or show["avail"] - was >= MORE_SEATS_MIN
+
+
 def check_task(task, page, date, place, shows):
-    """Compare one page's shows with one watcher, and alert if a show matches and has seats."""
+    """Compare one page's shows with one watcher, and alert on what changed.
+
+    A watcher alerts when bookings open (and repeats it as reminders), when they close again
+    (taken off sale, or sold out), when they reopen, and when seats free up. It keeps
+    watching until its dates pass or someone taps "Booked it" in an alert.
+    """
     listed = [s for s in shows if on_date(s, date)]
-    matching = [s for s in listed if wanted(task, s, date) and seats_open(s)]
-    multi_day = len(task_dates(task)) > 1
-    day = f"{dates_label(date).split(' · ')[-1]}: " if multi_day else ""
+    matched = [s for s in listed if wanted(task, s, date)]
+    open_now = [s for s in matched if seats_open(s)]
+    day = f"{dates_label(date).split(' · ')[-1]}: " if len(task_dates(task)) > 1 else ""
+    event = reason = None
+    alert_shows = open_now
+    now = time.time()
 
     with tasks_lock:
         if state["tasks"].get(task.get("id")) is not task or task.get("status") != "Active":
             return  # deleted or paused while this check was running
         if task.get("scope") != "city" and place != district.cinema_name_from_url(task.get("cinema_url")):
             task["cinema_name"] = place  # District's own name, when the page gives one
-        if not matching:
-            where = "across the city" if task.get("scope") == "city" else "listed"
-            set_result(task, page, f"{day}No match · {plural(len(listed), 'show')} {where}" if listed
-                       else f"{day}No shows listed yet")
+
+        # Seats per matching show on each of the watcher's pages (one per date, or per movie).
+        pages = task.setdefault("page_seats", {})
+        before = pages.get(page)
+        pages[page] = seat_counts(matched)
+        expected = set(task.get("expected_pages") or [page])
+        known = {p: pages[p] for p in expected if p in pages}
+        is_open = any(n > 0 for seats in known.values() for n in seats.values())
+        phase = task.get("phase") or "waiting"
+
+        where = "across the city" if task.get("scope") == "city" else "listed"
+        set_result(task, page, f"🔥 {day}{plural(len(open_now), 'show')} open" if open_now
+                   else f"{day}Sold out · {plural(len(matched), 'matching show')}" if matched
+                   else f"{day}No match · {plural(len(listed), 'show')} {where}" if listed
+                   else f"{day}No shows listed yet")
+
+        max_alerts = max(1, int(task.get("max_alerts", 5)))
+        if is_open and phase != "open" and open_now:
+            event = "reopened" if phase == "closed" else "opened"
+            task.update(phase="open", reminders_left=max_alerts - 1)
+        elif not is_open and phase == "open" and len(known) == len(expected):
+            # Every page has reported since bookings opened, and none has seats now.
+            event = "closed"
+            reason = "sold_out" if any(known.values()) else "pulled"
+            alert_shows = matched
+            task.update(phase="closed", reminders_left=0)
+        elif (open_now and before is not None and task.get("reminders_left", 0) <= 0
+              and now - task.get("last_more_ts", 0) >= MORE_SEATS_GAP):
+            freed = [s for s in open_now if gained_seats(before, s)]
+            if freed:
+                event, alert_shows = "more_seats", freed
+                task["last_more_ts"] = now
+        if (event is None and open_now and task.get("reminders_left", 0) > 0
+                and now - task.get("last_alert_ts", 0) >= state["interval_sec"] * 0.8):
+            event = "reminder"  # at most one per round, even when several pages are open
+            task["reminders_left"] -= 1
+        if event is None:
             return
-        # One alert per round, even when several dates or movies match at the same time.
-        if time.time() - task.get("last_alert_ts", 0) < state["interval_sec"] * 0.8:
-            return
-        max_alerts = int(task.get("max_alerts", 5))
-        count = int(task.get("alert_count", 0))
-        if count >= max_alerts:
-            task["status"] = "Done"
-            save_tasks()
-            return
-        count += 1
-        task["alert_count"] = count
-        task["last_alert_ts"] = time.time()
-        set_result(task, page, f"🔥 {day}{plural(len(matching), 'show')} open")
-        if count >= max_alerts:
-            task["status"] = "Done"
+        task["alert_count"] = int(task.get("alert_count", 0)) + 1
+        task["last_alert_ts"] = now
+        if not task.get("action_token"):
+            task["action_token"] = new_token()  # watchers made before alerts had buttons
         save_tasks()
         snapshot = dict(task)
 
     owners = owners_of(snapshot)
     name = snapshot.get("user_label", "Watcher")
-    where = task_place(snapshot)
-    add_log(f"🔥 [{name}] {plural(len(matching), 'matching show')} open at {where}! Sending alert {count}/{max_alerts}…", owners)
-    results = send_task_notification(snapshot, matching, where, count, max_alerts)
+    place_name = task_place(snapshot)
+    count = max_alerts - snapshot.get("reminders_left", 0)
+    shows_text = plural(len(alert_shows), "matching show")
+    add_log({
+        "opened": f"🔥 [{name}] bookings are open at {place_name}: {shows_text} with seats! Alerting…",
+        "reopened": f"🔁 [{name}] bookings reopened at {place_name}: {shows_text} with seats! Alerting…",
+        "reminder": f"🔥 [{name}] still open at {place_name}. Reminder {count}/{max_alerts}…",
+        "more_seats": f"🎟️ [{name}] seats freed up at {place_name} in {shows_text}. Alerting…",
+        "closed": f"⏸️ [{name}] bookings closed at {place_name} "
+                  f"({'sold out' if reason == 'sold_out' else 'taken off sale'}). Still watching.",
+    }[event], owners)
+    results = send_task_notification(snapshot, alert_shows, place_name, kind=event, count=count,
+                                     max_alerts=max_alerts, reason=reason, date=date)
     add_log(f"   [{name}] {describe_results(results)}", owners)
-    if count >= max_alerts:
-        add_log(f"✅ [{name}] All {max_alerts} alerts sent, watcher finished. Re-arm it from the Watchers tab.", owners)
 
 
 def check_city_list(job, directory):
@@ -179,7 +234,10 @@ def page_jobs(task, today):
 def plan(active, today):
     pages = {}
     for task in active:
-        for kind, page, date in page_jobs(task, today):
+        jobs = page_jobs(task, today)
+        # Bookings count as closed only once every one of these pages shows no seats.
+        task["expected_pages"] = [page for kind, page, _ in jobs if kind != "list"]
+        for kind, page, date in jobs:
             job = pages.setdefault(page, {"kind": kind, "date": date, "city": task.get("city"), "tasks": []})
             job["tasks"].append(task)
     return pages

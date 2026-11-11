@@ -24,6 +24,38 @@ class Links(unittest.TestCase):
     def test_without_a_cinema_page_only_the_seat_link_is_left(self):
         self.assertEqual(alerts.alert_links(show(cinema_url=None)), [("Open on District", SEATS)])
 
+    def test_opening_alert_has_both_buttons(self):
+        task = {"ntfy_topic": "t", "action_token": "abcdefghijklmnopqrstuvwx"}
+        res = mock.Mock(ok=True, status_code=200)
+        with mock.patch.object(alerts.requests, "post", return_value=res) as post, \
+                mock.patch("booktick.actions.PUBLIC_URL", "https://booktick.example"):
+            alerts.send_task_notification(task, [show()], "PVR", kind="opened")
+        ntfy = post.call_args.kwargs["json"]
+        self.assertEqual([(a["action"], a["method"], a["url"].rsplit("/", 1)[-1]) for a in ntfy["actions"]],
+                         [("http", "POST", "stop"), ("http", "POST", "keep")])
+        self.assertEqual(ntfy["priority"], 5)
+
+    def test_closed_alert_without_shows(self):
+        task = {"ntfy_topic": "t", "action_token": "abcdefghijklmnopqrstuvwx", "movie_filter": "Ramayana",
+                "cinema_url": CINEMA}
+        res = mock.Mock(ok=True, status_code=200)
+        with mock.patch.object(alerts.requests, "post", return_value=res) as post, \
+                mock.patch("booktick.actions.PUBLIC_URL", "https://booktick.example"):
+            alerts.send_task_notification(task, [], "PVR", kind="closed", reason="pulled", date="2026-11-14")
+        ntfy = post.call_args.kwargs["json"]
+        self.assertIn("Bookings closed: Ramayana", ntfy["title"])
+        self.assertEqual(ntfy["click"], f"{CINEMA}?fromdate=2026-11-14")
+        self.assertEqual(ntfy["priority"], 3)  # not the loud alarm
+        self.assertEqual(len(ntfy["actions"]), 2)
+
+    def test_no_buttons_without_a_public_address(self):
+        task = {"ntfy_topic": "t", "action_token": "abcdefghijklmnopqrstuvwx"}
+        res = mock.Mock(ok=True, status_code=200)
+        with mock.patch.object(alerts.requests, "post", return_value=res) as post, \
+                mock.patch("booktick.actions.PUBLIC_URL", ""):
+            alerts.send_task_notification(task, [show()], "PVR", kind="opened")
+        self.assertNotIn("actions", post.call_args.kwargs["json"])
+
     def test_tapping_opens_the_theatre_page(self):
         task = {"ntfy_topic": "t", "telegram_token": "x", "telegram_chat_id": "1", "discord_webhook": "https://d.example/w"}
         res = mock.Mock(ok=True, status_code=200)
@@ -32,7 +64,6 @@ class Links(unittest.TestCase):
         ntfy, telegram, discord = [call.kwargs["json"] for call in post.call_args_list]
         opened = f"{CINEMA}?fromdate=2026-11-10"
         self.assertEqual(ntfy["click"], opened)  # tapping the notification itself
-        self.assertNotIn("actions", ntfy)        # no extra buttons under it
         self.assertIn(opened, telegram["text"])
         self.assertIn(SEATS, telegram["text"])
         self.assertEqual(discord["embeds"][0]["url"], opened)

@@ -79,8 +79,13 @@ class Alerts(unittest.TestCase):
         mock.patch.stopall()
         state["tasks"] = {}
 
-    def check(self, shows):
-        engine.check_task(self.task, "page", today_ist(), "PVR", shows)
+    def check(self, shows, page="page", next_round=True):
+        if next_round:
+            self.task["last_alert_ts"] = 0
+        engine.check_task(self.task, page, today_ist(), "PVR", shows)
+
+    def kinds(self):
+        return [call.kwargs["kind"] for call in self.send.call_args_list]
 
     def test_no_alert_without_a_match(self):
         self.check([show(10, title="Jailer 2")])
@@ -91,15 +96,45 @@ class Alerts(unittest.TestCase):
         self.check([show(10, avail=0)])
         self.send.assert_not_called()
 
-    def test_alerts_until_the_count_is_used_up(self):
+    def test_opening_alert_then_reminders_then_quiet(self):
         self.check([show(10)])
-        self.assertEqual(self.send.call_count, 1)
-        self.check([show(10)])  # same round: no second alert
-        self.assertEqual(self.send.call_count, 1)
-        self.task["last_alert_ts"] = 0  # next round
+        self.check([show(10)], next_round=False)  # same round: no second alert
         self.check([show(10)])
-        self.assertEqual(self.send.call_count, 2)
-        self.assertEqual(self.task["status"], "Done")
+        self.check([show(10)])  # max_alerts is 2, so no more reminders
+        self.assertEqual(self.kinds(), ["opened", "reminder"])
+        self.assertEqual(self.task["status"], "Active")  # still watching, not finished
+        self.assertTrue(self.task["action_token"])
+
+    def test_closed_then_reopened(self):
+        self.check([show(10)])
+        self.check([show(10, avail=0)])     # sold out
+        self.check([])                       # then taken off sale: already closed, no new alert
+        self.check([show(10, avail=5)])      # back
+        self.assertEqual(self.kinds(), ["opened", "closed", "reopened"])
+        self.assertEqual(self.send.call_args_list[1].kwargs["reason"], "sold_out")
+        self.assertEqual(self.task["phase"], "open")
+        self.assertEqual(self.task["reminders_left"], 1)  # reminders start over
+
+    def test_taken_off_sale(self):
+        self.check([show(10)])
+        self.check([])
+        self.assertEqual(self.send.call_args_list[-1].kwargs["reason"], "pulled")
+
+    def test_more_seats_after_the_reminders(self):
+        self.task["max_alerts"] = 1
+        self.check([show(10, avail=2)])
+        self.check([show(10, avail=5)])   # only 3 more: not enough
+        self.check([show(10, avail=40)])  # 35 more
+        self.check([show(10, avail=40), show(18, title="Ramayana")])  # a new show, but too soon after the last
+        self.assertEqual(self.kinds(), ["opened", "more_seats"])
+
+    def test_closed_only_once_every_date_has_reported(self):
+        self.task["expected_pages"] = ["day1", "day2"]
+        self.check([show(10)], page="day1")
+        self.check([], page="day1")  # day 2 hasn't been checked yet: can't say it's closed
+        self.assertEqual(self.kinds(), ["opened"])
+        self.check([], page="day2")
+        self.assertEqual(self.kinds(), ["opened", "closed"])
 
     def test_paused_watchers_are_skipped(self):
         self.task["status"] = "Paused"

@@ -15,7 +15,8 @@ from .config import DATABASE_URL, DB_TABLE, LEGACY_TASKS_FILE, TASKS_FILE
 from .core import add_log, plural, redact, save_needed, shorten, state, tasks_lock, wake_engine
 
 # Rewritten on every check and meaningless after a restart, so they aren't stored.
-UNSTORED_KEYS = ("last_checked", "last_checked_ts", "last_result", "last_alert_ts")
+UNSTORED_KEYS = ("last_checked", "last_checked_ts", "last_result", "last_alert_ts", "last_more_ts",
+                 "page_seats", "expected_pages")
 # What the database holds right now (in stored_form), so only changes get written.
 _db = {"ready": False, "stored": {}}
 
@@ -31,7 +32,7 @@ def save_tasks():
     tmp = TASKS_FILE + ".tmp"
     try:
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(state["tasks"], f, indent=2)
+            json.dump(stored_form(state["tasks"]), f, indent=2)
         os.replace(tmp, TASKS_FILE)
     except Exception as e:
         print(f"Could not save watchers: {e}", flush=True)
@@ -51,8 +52,8 @@ def db_reason(e):
 
 def stored_form(tasks):
     """The watchers as they're saved: plain JSON copies, without the per-check fields."""
-    return {tid: {k: v for k, v in t.items() if k not in UNSTORED_KEYS}
-            for tid, t in json.loads(json.dumps(tasks)).items()}
+    kept = {tid: {k: v for k, v in t.items() if k not in UNSTORED_KEYS} for tid, t in tasks.items()}
+    return json.loads(json.dumps(kept))
 
 
 def db_connect():

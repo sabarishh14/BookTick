@@ -5,8 +5,9 @@ from urllib.parse import urlparse
 
 import requests
 
+from .actions import action_url
 from .config import APP_NAME, BRAND_DISCORD_COLOR
-from .core import fmt_price, fmt_when, now_ist, redact, seats_text, shorten
+from .core import fmt_price, fmt_when, now_ist, plural, redact, seats_text, shorten
 from .district import query_url
 
 
@@ -44,75 +45,118 @@ def alert_links(show):
     return [("Open cinema", query_url(show["cinema_url"], date)), ("Seat map (web)", seats)]
 
 
-def send_task_notification(task, shows, place, alert_idx=1, max_alerts=1, test=False):
-    """Send to every channel on the task. `place` is the cinema, or "Cinemas in <city>".
+# What each kind of alert says, and the buttons it has: (label, choice) for actions.apply.
+BUTTONS = {
+    "opened": [("Booked it, stop watching", "stop"), ("Got it, keep watching", "keep")],
+    "reopened": [("Booked it, stop watching", "stop"), ("Got it, keep watching", "keep")],
+    "reminder": [("Booked it, stop watching", "stop"), ("Got it, keep watching", "keep")],
+    "more_seats": [("Booked it, stop watching", "stop")],
+    "closed": [("Yes, booked. Stop watching", "stop"), ("Not yet, keep watching", "keep")],
+}
 
-    Returns [(channel, ok, detail), ...].
+
+def wording(kind, name, shows, count, max_alerts, reason):
+    """(headline, intro) for an alert."""
+    n = plural(len(shows), "matching show")
+    if kind == "reopened":
+        return f"🔁 Bookings reopened: {name}", f"They're back. {n} with seats right now."
+    if kind == "reminder":
+        return f"🚨 [{count}/{max_alerts}] Still open: {name}", f"{n} still have seats."
+    if kind == "more_seats":
+        return f"🎟️ More seats: {name}", "Seats just freed up in these shows:"
+    if kind == "closed":
+        why = ("Every matching show is sold out right now." if reason == "sold_out"
+               else "The shows have been taken off sale for now.")
+        return (f"⏸️ Bookings closed: {name}",
+                f"{why} BookTick keeps watching and will tell you if they come back. Did you get tickets?")
+    return f"🚨 Tickets open: {name}", f"{n} with seats right now."
+
+
+def send_task_notification(task, shows, place, kind="opened", count=1, max_alerts=1, reason=None, date=None, test=False):
+    """Send one alert to every channel on the task. Returns [(channel, ok, detail), ...].
+
+    `place` is the cinema, or "Cinemas in <city>". `kind` is opened, reopened, reminder,
+    more_seats or closed; a closed alert may have no shows (when they were taken off sale).
     """
-    first = shows[0]
-    titles = list(dict.fromkeys(s["title"] for s in shows))
+    titles = list(dict.fromkeys(s["title"] for s in shows)) or [task.get("movie_filter") or "your movie"]
+    name = " / ".join(titles)
     formats = list(dict.fromkeys(str(s["format"]) for s in shows))
-    movie = f"{' / '.join(titles)} ({', '.join(formats)})"
-    counter = f"[{alert_idx}/{max_alerts}] " if max_alerts > 1 and not test else ""
-    headline = f"🧪 Test alert from {APP_NAME}" if test else f"🚨 {counter}Tickets open: {' / '.join(titles)}"
-    intro = "Your alerts work. A real alert will look like this:" if test else f"{len(shows)} matching show(s) have seats right now."
+    movie = f"{name} ({', '.join(formats)})" if formats else name
+    if test:
+        headline, intro = f"🧪 Test alert from {APP_NAME}", "Your alerts work. A real alert will look like this:"
+    else:
+        headline, intro = wording(kind, name, shows, count, max_alerts, reason)
     lines = show_lines(shows)
-    links = alert_links(first)
-    open_link = links[0][1]
+    if shows:
+        links = alert_links(shows[0])
+    elif task.get("cinema_url"):
+        links = [("Open cinema", query_url(task["cinema_url"], date))]
+    else:
+        links = []
+    open_link = links[0][1] if links else None
+    buttons = [] if test else [(label, action_url(task, choice)) for label, choice in BUTTONS.get(kind, [])]
+    buttons = [(label, url) for label, url in buttons if url]  # none without a public address
+    page = None if test else action_url(task)
+    loud = test or kind != "closed"
     results = []
 
-    # 1. ntfy.sh
+    # 1. ntfy.sh: the buttons call BookTick straight from the notification.
     topic = (task.get("ntfy_topic") or "").strip()
     if topic:
+        payload = {
+            "topic": topic,
+            "title": headline,
+            "message": "\n".join([intro, f"🎬 {movie}", f"🏛️ {place}"] + ([""] + lines if lines else [])),
+            "priority": 5 if loud else 3,
+            "tags": ["test_tube"] if test else ["pause_button"] if kind == "closed" else ["rotating_light", "ticket"],
+        }
+        if open_link:
+            payload["click"] = open_link  # tapping the notification opens the theatre page
+        if buttons:
+            payload["actions"] = [{"action": "http", "label": label, "url": url, "method": "POST", "clear": True}
+                                  for label, url in buttons]
         try:
-            res = requests.post(
-                "https://ntfy.sh",
-                json={
-                    "topic": topic,
-                    "title": headline,
-                    "message": "\n".join([intro, f"🎬 {movie}", f"🏛️ {place}", ""] + lines),
-                    "priority": 5,
-                    "tags": ["test_tube"] if test else ["rotating_light", "ticket"],
-                    "click": open_link,  # tapping the notification opens the theatre page
-                },
-                timeout=10,
-            )
+            res = requests.post("https://ntfy.sh", json=payload, timeout=10)
             results.append(("ntfy", res.ok, "sent" if res.ok else response_error(res)))
         except Exception as e:
             results.append(("ntfy", False, str(e)))
 
-    # 2. Telegram
+    # 2. Telegram: a button that opens BookTick's small "Did you get tickets?" page.
     tg_token = (task.get("telegram_token") or "").strip()
     tg_chat = (task.get("telegram_chat_id") or "").strip()
     if tg_token and tg_chat:
         esc = html_lib.escape
+        link_line = " · ".join(f'<a href="{esc(link, quote=True)}"><b>{esc(label)}</b></a>' for label, link in links)
         text = "\n".join(
-            [f"<b>{esc(headline)}</b>", "", esc(intro), f"🎬 <b>{esc(movie)}</b>", f"🏛️ {esc(place)}", ""]
-            + [esc(line) for line in lines]
-            + ["", "👉 " + " · ".join(f'<a href="{esc(link, quote=True)}"><b>{esc(label)}</b></a>' for label, link in links)]
+            [f"<b>{esc(headline)}</b>", "", esc(intro), f"🎬 <b>{esc(movie)}</b>", f"🏛️ {esc(place)}"]
+            + ([""] + [esc(line) for line in lines] if lines else [])
+            + (["", "👉 " + link_line] if link_line else [])
         )
+        body = {"chat_id": tg_chat, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}
+        if page and buttons:
+            body["reply_markup"] = {"inline_keyboard": [[{"text": "Booked it? Stop or keep watching", "url": page}]]}
         try:
-            res = requests.post(
-                f"https://api.telegram.org/bot{tg_token}/sendMessage",
-                json={"chat_id": tg_chat, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True},
-                timeout=10,
-            )
+            res = requests.post(f"https://api.telegram.org/bot{tg_token}/sendMessage", json=body, timeout=10)
             results.append(("Telegram", res.ok, "sent" if res.ok else response_error(res)))
         except Exception as e:
             results.append(("Telegram", False, redact(e, tg_token)))
 
-    # 3. Discord
+    # 3. Discord: a link to the same page.
     discord_url = (task.get("discord_webhook") or "").strip()
     if discord_url:
+        link_line = " · ".join(f"[{label}]({link})" for label, link in links)
+        if page and buttons:
+            link_line += f"{' · ' if link_line else ''}[Booked it? Stop or keep watching]({page})"
         embed = {
             "title": headline,
-            "url": open_link,
             "color": 0x6366F1 if test else BRAND_DISCORD_COLOR,
-            "description": "\n".join([intro, f"**{movie}**", place, ""] + lines
-                                     + ["", " · ".join(f"[{label}]({link})" for label, link in links)]),
+            "description": "\n".join([intro, f"**{movie}**", place] + ([""] + lines if lines else [])
+                                     + (["", link_line] if link_line else [])),
             "footer": {"text": APP_NAME},
         }
-        content = "🧪 Test alert" if test else "@everyone 🔥 Tickets are open!"
+        if open_link:
+            embed["url"] = open_link
+        content = "🧪 Test alert" if test else "@everyone 🔥 Tickets are open!" if loud else "Bookings closed"
         try:
             res = requests.post(discord_url, json={"content": content, "embeds": [embed]}, timeout=10)
             ok = res.status_code in (200, 204)

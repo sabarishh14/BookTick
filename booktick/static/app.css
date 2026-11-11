@@ -535,6 +535,12 @@ a.bt-show:hover { border-color: var(--bt-brand); transform: translateY(-1px); bo
   .bt-dialog-actions .bt-btn { flex: 1; }
 }
 
+/* ---------- where bookings stand, on a watcher card ---------- */
+.bt-phase { display: flex; justify-content: space-between; gap: 10px; font-size: .8rem; color: var(--bt-muted); }
+.bt-phase b { color: var(--bt-text); font-weight: 650; white-space: nowrap; }
+.bt-phase.open span { color: var(--bt-hot); font-weight: 700; }
+.bt-phase.closed span { color: var(--bt-warn); font-weight: 650; }
+
 /* ---------- watchers toolbar ---------- */
 .bt-toolbar-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 

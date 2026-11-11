@@ -12,6 +12,7 @@ import uuid
 import gradio as gr
 
 from . import access, district, engine
+from .actions import new_token
 from .alerts import describe_results, sample_shows, send_task_notification
 from .config import DEFAULT_CITY, MAX_INTERVAL, MAX_RANGE_DAYS, MIN_INTERVAL, PREVIEW_CACHE, TIME_SLOTS
 from .core import (add_log, dates_label, log_lock, now_ist, parse_dates, plural, shorten, state, task_dates_label,
@@ -383,6 +384,9 @@ def add_new_watcher(session, user_name, cinema_value, cin_url, movie_names, fmt_
         max_alerts=int(max_alerts_val or 5),
         alert_count=0,
         status="Active",
+        phase="waiting",  # waiting for bookings to open; then open, closed, open again…
+        reminders_left=0,
+        action_token=new_token(),  # lets the buttons in its alerts stop it or keep it going
         created_at=now_ist().strftime("%d-%b %H:%M"),
         created_ts=time.time(),
     )
@@ -422,7 +426,9 @@ def toggle_watcher(task):
 def rearm_watcher(task):
     if task.get("status") == "Expired":
         return False, "This watcher's dates have passed. Create a new one instead."
-    task.update(alert_count=0, status="Active", last_result="", last_checked="", last_checked_ts=None, last_alert_ts=0)
+    task.update(alert_count=0, status="Active", phase="waiting", reminders_left=0, booked=False, last_result="",
+                last_checked="", last_checked_ts=None, last_alert_ts=0)
+    task.pop("page_seats", None)  # start fresh, so bookings that are open now alert again
     add_log(f"🔄 [{task.get('user_label')}] re-armed: alert count reset and watching again.", (task.get("owner"),))
     return True, f"Re-armed the {watcher_title(task)} watcher. It's watching again."
 

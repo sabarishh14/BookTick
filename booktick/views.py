@@ -230,7 +230,7 @@ HELP_HTML = f"""
     <li><b>Pick your city and cinema</b><span>Every cinema on <a href="https://www.district.in" target="_blank" rel="noopener noreferrer">District</a> is listed. Pick <em>Any cinema</em> to hear the moment your movie opens anywhere in the city.</span></li>
     <li><b>Pick the movie, format, time and dates</b><span>Bookings not open yet? Type the movie's name. Tap <em>Preview shows</em> to see what's listed right now.</span></li>
     <li><b>Choose where to get alerts</b><span>ntfy is quickest: install the app, subscribe to a topic, and enter the same topic here.</span></li>
-    <li><b>Send a test, then start watching</b><span>When a matching show has seats, you get the alerts you chose. Tap one to open the theatre's page. Then the watcher stops; re-arm it from <em>Watchers</em>.</span></li>
+    <li><b>Send a test, then start watching</b><span>When bookings open you get an alert, plus reminders. Tap it to open the theatre's page. BookTick keeps watching and tells you if seats free up, or if bookings close and reopen, until you tap <em>Booked it</em> in an alert.</span></li>
   </ol>
   <h4>Good to know</h4>
   <ul class="bt-tips">
@@ -299,6 +299,13 @@ def status_html(session):
 
 
 # --- Watcher cards ------------------------------------------------------------
+# Where bookings stand for a watcher that's still going: (text, tone).
+PHASES = {
+    "waiting": ("Waiting for bookings to open", ""),
+    "open": ("Bookings are open", "open"),
+    "closed": ("Closed again · still watching", "closed"),
+}
+
 STATUS_META = {
     "Active": ("Watching", "active", "Active"),
     "Paused": ("Paused", "paused", "Paused"),
@@ -364,8 +371,11 @@ def watcher_card(task_id, t, session):
         tags.append('<span class="bt-tag warn">Date has passed</span>')
 
     sent = to_int(t.get("alert_count")) or 0
-    max_alerts = to_int(t.get("max_alerts")) or 5
-    pct = min(100, round(100 * sent / max_alerts)) if max_alerts else 0
+    if status == "Done" and t.get("booked"):
+        label = "Booked"
+    phase, phase_tone = PHASES.get(t.get("phase") or "waiting", PHASES["waiting"])
+    if status == "Done":
+        phase, phase_tone = ("Stopped after you booked" if t.get("booked") else "Finished"), ""
 
     if status == "Expired":
         last_html = (f'<div class="bt-last">{icon("calendar")}<div><b>Its dates have passed</b>'
@@ -410,10 +420,7 @@ def watcher_card(task_id, t, session):
     <div class="bt-card-cinema">{place_html(t)}</div>
   </div>
   <div class="bt-tags">{"".join(tags)}</div>
-  <div class="bt-progress">
-    <div class="bt-progress-top"><span>Alerts sent</span><b>{sent} / {max_alerts}</b></div>
-    <div class="bt-bar"><i style="width:{pct}%"></i></div>
-  </div>
+  <div class="bt-phase {phase_tone}"><span>{esc(phase)}</span><b>{plural(sent, "alert")} sent</b></div>
   {last_html}
   <div class="bt-chans">{icon("bell")}{channel_chips(t)}</div>
   <div class="bt-actions">{"".join(actions)}</div>
@@ -474,7 +481,7 @@ def watchers_html(session):
 # --- Activity log -------------------------------------------------------------
 LOG_TONES = (("🔥", "hot"), ("⚠", "warn"), ("❌", "warn"), ("Engine error", "warn"), ("✅", "ok"),
              ("➕", "info"), ("🔄", "info"), ("🧪", "info"), ("▶", "info"), ("🗄", "info"), ("⏸", "muted"),
-             ("🗑", "muted"), ("📅", "muted"))
+             ("🗑", "muted"), ("📅", "muted"), ("🔁", "hot"), ("🎟", "hot"), ("🎉", "ok"), ("👍", "info"))
 
 
 def logs_html(session):

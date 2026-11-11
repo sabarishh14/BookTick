@@ -15,6 +15,10 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 # Unlocks the admin controls (engine pause, check interval, every watcher). Without it,
 # nobody can use them.
 ADMIN_KEY = os.environ.get("ADMIN_KEY", "").strip()
+# Where this app can be reached from the internet, for the buttons in alerts. Hugging Face
+# sets SPACE_HOST by itself; anywhere else, set PUBLIC_URL. Without either, alerts have no buttons.
+PUBLIC_URL = (os.environ.get("PUBLIC_URL", "").strip()
+              or (f"https://{os.environ['SPACE_HOST'].strip()}" if os.environ.get("SPACE_HOST") else "")).rstrip("/")
 
 # --- Checking -------------------------------------------------------------------
 DEFAULT_INTERVAL = 15        # seconds between checks of the same District page
@@ -25,6 +29,8 @@ MAX_BACKOFF = 600            # longest wait before retrying a page that keeps fa
 MAX_BLOCK_BACKOFF = 1800     # longest pause for everyone when District turns requests away
 MAX_RANGE_DAYS = 7           # longest date range one watcher can cover
 KEEP_FINISHED_DAYS = 7       # finished watchers are removed this many days after their last date
+MORE_SEATS_MIN = 10          # seats a show must gain before a "more seats" alert (or any, if it was sold out)
+MORE_SEATS_GAP = 300         # seconds between "more seats" alerts for one watcher
 
 # --- Limits (admins are exempt) -------------------------------------------------
 MAX_WATCHERS_PER_PERSON = 5   # open watchers (watching or paused) per browser

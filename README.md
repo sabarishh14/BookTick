@@ -20,7 +20,8 @@ A Python and Gradio app that watches [District](https://www.district.in) around 
 - **Any cinema, or the whole city**: 790+ cities from District's sitemap, cinemas searchable by name or area, a pasted district.in link, or **Any cinema** to hear the moment your movie opens anywhere in the city
 - **Movie, format, dates and show times**: several movies at once (including ones whose bookings haven't opened), IMAX / 4DX / 3D / 2D or your own format, one day or up to 7 in a row from a calendar, and morning / afternoon / evening / night
 - **Live preview**: everything listed right now, with seats left, prices and booking links, grouped by cinema for a city-wide watch
-- **Alerts**: ntfy, Telegram and Discord, a test alert before you start, and 1 to 20 alerts per watcher
+- **Alerts**: ntfy, Telegram and Discord, and a test alert before you start. You hear when bookings open (plus reminders), when they close again, when they reopen and when seats free up
+- **Answer from the alert**: ntfy alerts have **Booked it, stop watching** and **Got it, keep watching** buttons; Telegram and Discord alerts link to a page with the same two
 - **Private watchers**: each browser sees and manages only its own; **Copy my link** opens them on another device
 - **Watcher cards**: pause, resume, re-arm, send a test, or delete, and filter by status. Watchers stop by themselves once their dates pass
 - **Admin controls**: pause checking for everyone, change how often it runs, see every watcher and the engine's health
@@ -86,6 +87,8 @@ Every push to `main` that changes `app.py`, `booktick/`, `requirements.txt` or `
 1. Add a repository secret named `HF_TOKEN`: a Hugging Face access token with write access to the Space
 2. Add `DATABASE_URL` and `ADMIN_KEY` as secrets on the Space (see steps 2 and 3)
 
+The buttons in alerts call the Space at its public address, which Hugging Face provides as `SPACE_HOST`. Anywhere else, set `PUBLIC_URL` to the address people reach the app at; without it, alerts are sent without buttons.
+
 ### 6. Keep the Space awake (optional)
 
 A free Space goes to sleep after a while without visitors, and checking stops until someone opens it. To keep it awake for free:
@@ -133,7 +136,7 @@ BookTick/
 | Fetch | Due pages go to 4 workers. Pages arrive compressed (about 50 KB instead of 500 KB), on a connection that's never reused after sitting idle |
 | Parse | Shows from the page's `__NEXT_DATA__` (seats, prices, formats); on cinema pages, Schema.org `ScreeningEvent`s fill gaps and add booking links |
 | Match | The title contains one of your movie names, the format contains yours, the show is on one of your dates and in your show times, and seats are open |
-| Alert | At most one alert per check round, until the watcher's alert count is used up. Then it's marked **Alerted** |
+| Alert | On changes: bookings open (then reminders, one per round, until you tap a button), close again (sold out or taken off sale), reopen, or a show gains 10+ seats. A watcher keeps going until its dates pass or you tap **Booked it** |
 | Back off | A failing page waits 2×, 4×, 8× longer (up to 10 minutes). If District turns requests away (HTTP 403/429), every check pauses, longer each time (up to 30 minutes) |
 | Clean up | Watchers whose dates have passed stop by themselves and are removed a week later |
 | Save | Status and alert count are saved in the background; per-check details stay in memory |
