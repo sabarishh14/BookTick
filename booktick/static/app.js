@@ -453,3 +453,13 @@
     document.querySelectorAll(".bt-date.is-open").forEach((r) => { if (!r.contains(e.target)) close(r); });
   });
 })();
+
+// Picking a different city or cinema: select the current name on focus so typing
+// replaces it, instead of backspacing the whole name first.
+(() => {
+  document.addEventListener("focusin", (e) => {
+    const input = e.target;
+    if (!(input instanceof HTMLInputElement) || !input.closest(".bt-dd") || input.closest("#bt-movie")) return;
+    setTimeout(() => { if (document.activeElement === input && input.value) input.select(); }, 0);
+  });
+})();

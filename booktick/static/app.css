@@ -56,6 +56,17 @@
 .bt-gh-text b { font-size: .92rem; font-weight: 700; color: #fff; }
 .bt-gh-mark { width: 20px; height: 20px; flex: none; opacity: .9; }
 .bt-hero-side { position: relative; z-index: 1; display: flex; align-items: center; gap: 10px; }
+.bt-howto { height: 48px; flex: none; display: inline-flex; align-items: center; gap: 8px; padding: 0 18px; border-radius: 999px;
+  background: rgba(255, 255, 255, .08); border: 1px solid rgba(255, 255, 255, .16); color: #fff !important;
+  font-size: .9rem; font-weight: 650; text-decoration: none !important; transition: background .2s, border-color .2s; }
+.bt-howto:hover { background: rgba(255, 255, 255, .15); border-color: rgba(255, 255, 255, .3); }
+.bt-howto:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.bt-howto .bt-i { font-size: 18px; }
+.bt-howto *, .bt-theme * { color: inherit !important; }
+@media (max-width: 640px) {
+  .bt-howto { width: 48px; padding: 0; justify-content: center; }
+  .bt-howto span { display: none; }
+}
 .bt-theme { width: 48px; height: 48px; flex: none; display: grid; place-items: center; margin: 0; padding: 0; border-radius: 50%;
   background: rgba(255, 255, 255, .08); border: 1px solid rgba(255, 255, 255, .16); color: #fff; cursor: pointer;
   transition: background .2s, border-color .2s; }

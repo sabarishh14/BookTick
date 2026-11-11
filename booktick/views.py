@@ -4,7 +4,7 @@ import re
 
 from . import access, district, engine, seatmap
 from .config import (ADMIN_KEY, APP_NAME, APP_TAGLINE, AUTHOR_NAME, DATABASE_URL, GITHUB_AVATAR, GITHUB_URL,
-                     GITHUB_USER, MAX_RANGE_DAYS, TIME_SLOTS)
+                     MAX_RANGE_DAYS, TIME_SLOTS)
 from .core import (ago, date_is_past, dates_label, fmt_clock, fmt_price, logs_for, plural, shorten, state, task_dates,
                    task_dates_label, tasks_lock, to_int)
 
@@ -190,6 +190,9 @@ def header_html():
     </div>
   </div>
   <div class="bt-hero-side">
+    <a class="bt-howto" href="/help" target="_blank" rel="noopener" title="How to use BookTick (opens in a new tab)">
+      {icon("info")}<span>How to use</span>
+    </a>
     <button type="button" class="bt-theme" data-bt-theme aria-label="Switch between light and dark mode" title="Light / dark mode">
       {icon("moon", "bt-i-moon")}{icon("sun", "bt-i-sun")}
     </button>
@@ -206,11 +209,6 @@ def footer_html():
     return f"""
 <div class="bt-footer">
   <div class="bt-footer-brand">{logo_svg("foot", "bt-logo-sm")}<b>{APP_NAME}</b><span>Movie ticket alerts for District</span></div>
-  <div class="bt-footer-meta">
-    <a href="{GITHUB_URL}" target="_blank" rel="noopener noreferrer">
-      <img src="{GITHUB_AVATAR}" alt="" width="22" height="22">Built by {AUTHOR_NAME}</a>
-    <a href="{GITHUB_URL}" target="_blank" rel="noopener noreferrer">{GITHUB_MARK}@{GITHUB_USER}</a>
-  </div>
   <p class="bt-footer-note">{APP_NAME} is an independent project and isn't affiliated with District or Zomato. All times are IST.</p>
 </div>"""
 
@@ -248,11 +246,6 @@ def about_html():
   {logo_svg("about", "bt-logo-md")}
   <h3>About {APP_NAME}</h3>
   <p>{APP_NAME} keeps an eye on District cinema pages and pings your phone the moment seats open for the show you want.</p>
-  <a class="bt-gh-card" href="{GITHUB_URL}" target="_blank" rel="noopener noreferrer">
-    <img src="{GITHUB_AVATAR}" alt="" width="44" height="44">
-    <span><b>{AUTHOR_NAME}</b><small>github.com/{GITHUB_USER}</small></span>
-    {GITHUB_MARK}
-  </a>
 </div>"""
 
 

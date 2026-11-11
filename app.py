@@ -6,9 +6,11 @@ storage.py saves them, access.py decides who can see and change what, views.py a
 handlers.py build the page, and static/ holds its CSS and JS.
 """
 import gradio as gr
+from fastapi.responses import HTMLResponse
 
 from booktick import handlers as h
 from booktick.actions import register as register_actions
+from booktick.guide import GUIDE_HTML
 from booktick.seatmap import register as register_seatmap
 from booktick.config import (APP_NAME, DEFAULT_CINEMA_LABEL, DEFAULT_CITY, DEFAULT_URL, FORMAT_CHOICES,
                              MAX_INTERVAL, MIN_INTERVAL)
@@ -272,4 +274,5 @@ demo.queue(default_concurrency_limit=8).launch(server_name="0.0.0.0", server_por
                                                prevent_thread_lock=True)
 register_actions(demo.app)  # the addresses the buttons in alerts call (see booktick/actions.py)
 register_seatmap(demo.app)  # seat map images (see booktick/seatmap.py)
+demo.app.add_api_route("/help", lambda: HTMLResponse(GUIDE_HTML), methods=["GET"], include_in_schema=False)
 demo.block_thread()

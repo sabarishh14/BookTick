@@ -35,5 +35,19 @@ class Cards(unittest.TestCase):
         self.assertIn("not yours", card)
 
 
+class Page(unittest.TestCase):
+    def test_header_links_the_guide_and_only_the_header_credits_the_author(self):
+        self.assertIn('href="/help" target="_blank"', views.header_html())
+        self.assertIn(views.AUTHOR_NAME, views.header_html())
+        self.assertNotIn(views.AUTHOR_NAME, views.footer_html())
+        self.assertIn("isn't affiliated with District", views.footer_html())
+        self.assertNotIn(views.AUTHOR_NAME, views.about_html())
+
+    def test_guide_covers_setup_alerts_and_management(self):
+        from booktick.guide import GUIDE_HTML
+        for heading in ("1. Set up a watcher", "2. Choose where alerts go", "3. What you'll get", "4. Manage your watchers"):
+            self.assertIn(heading, GUIDE_HTML)
+
+
 if __name__ == "__main__":
     unittest.main()
