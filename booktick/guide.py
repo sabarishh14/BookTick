@@ -1,51 +1,9 @@
-"""The "How to use" page (served at /help, opened from the header in a new tab)."""
-from .config import APP_NAME, MAX_RANGE_DAYS, MAX_SEATMAPS, MAX_WATCHERS_PER_PERSON
-from .views import RESTART_TIP, logo_svg
+"""The "How to use" tab: the full guide, opened from the tab bar or the header button."""
+from .config import MAX_RANGE_DAYS, MAX_SEATMAPS, MAX_WATCHERS_PER_PERSON
+from .views import RESTART_TIP
 
-GUIDE_HTML = f"""<!doctype html>
-<html lang="en"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>How to use {APP_NAME}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
-<script>
-  // Follow the light/dark choice made with the toggle in BookTick, if there is one.
-  try {{ const t = localStorage.getItem("booktick-theme"); if (t) document.documentElement.dataset.theme = t; }} catch (e) {{}}
-</script>
-<style>
-  :root {{ --bg: #f4f4f9; --card: #fff; --soft: #f6f6fa; --text: #161729; --muted: #686a82; --line: #e8e8f0;
-          --brand: #f9573a; --brand-bg: #ffebe5; }}
-  @media (prefers-color-scheme: dark) {{
-    :root:not([data-theme="light"]) {{ --bg: #0b0c16; --card: #151624; --soft: #1c1d2e; --text: #ececf4; --muted: #9a9cb5;
-                                       --line: #2a2b40; --brand: #ff8a6e; --brand-bg: rgba(249, 87, 58, .15); }}
-  }}
-  :root[data-theme="dark"] {{ --bg: #0b0c16; --card: #151624; --soft: #1c1d2e; --text: #ececf4; --muted: #9a9cb5;
-                              --line: #2a2b40; --brand: #ff8a6e; --brand-bg: rgba(249, 87, 58, .15); }}
-  * {{ box-sizing: border-box; }}
-  body {{ margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 "Plus Jakarta Sans", system-ui, sans-serif; }}
-  main {{ max-width: 760px; margin: 0 auto; padding: 28px 16px 56px; }}
-  header {{ display: flex; align-items: center; gap: 14px; margin-bottom: 28px; }}
-  header svg {{ width: 48px; height: 48px; flex: none; }}
-  h1 {{ margin: 0; font-size: 1.6rem; letter-spacing: -.02em; }}
-  header p {{ margin: 2px 0 0; color: var(--muted); }}
-  section {{ margin: 0 0 16px; padding: 20px 22px; border-radius: 18px; background: var(--card); border: 1px solid var(--line); }}
-  h2 {{ margin: 0 0 10px; font-size: 1.1rem; letter-spacing: -.01em; }}
-  p {{ margin: 0 0 10px; }} p:last-child {{ margin-bottom: 0; }}
-  ol, ul {{ margin: 0; padding-left: 1.3em; }} li {{ margin: 0 0 8px; }} li:last-child {{ margin-bottom: 0; }}
-  b {{ font-weight: 700; }} .muted {{ color: var(--muted); }}
-  code {{ padding: 1px 6px; border-radius: 6px; background: var(--soft); border: 1px solid var(--line); font-size: .88em; }}
-  .alerts {{ display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }}
-  .alerts li {{ margin: 0; padding: 12px 14px; border-radius: 12px; background: var(--soft); }}
-  .alerts li > b:first-child {{ display: block; }}
-  .tag {{ display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--brand-bg); color: var(--brand);
-          font-size: .82rem; font-weight: 700; }}
-  a {{ color: var(--brand); font-weight: 600; }}
-  footer {{ margin-top: 22px; font-size: .85rem; color: var(--muted); }}
-</style></head>
-<body><main>
-<header>{logo_svg("guide")}<div><h1>How to use {APP_NAME}</h1>
-  <p>Get an alert on your phone the moment tickets open on District, at your cinema or anywhere in your city.</p></div></header>
-
+GUIDE_HTML = f"""
+<div class="bt-guide">
 <section>
   <h2>1. Set up a watcher</h2>
   <ol>
@@ -81,10 +39,10 @@ GUIDE_HTML = f"""<!doctype html>
     <li><b>🗺️ Seat map</b> A few seconds later, a picture of each matching show's seats (up to {MAX_SEATMAPS}): outlined seats
       are free, grey ones are sold or blocked, and the screen is at the bottom. It's just for looking, so tapping it does nothing.</li>
     <li><b>⏸️ Bookings closed</b> If the shows sell out or are taken off sale, BookTick tells you and keeps watching.</li>
-    <li><b>🔁 Bookings reopened</b> and <b>🎟️ More seats</b> If they come back, or a show suddenly gets more seats
+    <li><b>🔁 Bookings reopened · 🎟️ More seats</b> If they come back, or a show suddenly gets more seats
       (at most once every 15 minutes).</li>
   </ul>
-  <p style="margin-top:12px">ntfy alerts have two buttons: <span class="tag">Booked it, stop watching</span> and
+  <p class="bt-guide-after">ntfy alerts have two buttons: <span class="tag">Booked it, stop watching</span> and
     <span class="tag">Got it, keep watching</span> (which stops the reminders but keeps watching). Telegram and Discord
     alerts have a link to a page with the same two buttons.</p>
 </section>
@@ -109,6 +67,4 @@ GUIDE_HTML = f"""<!doctype html>
     <li>{RESTART_TIP}</li>
   </ul>
 </section>
-
-<footer>{APP_NAME} is an independent project and isn't affiliated with District or Zomato.</footer>
-</main></body></html>"""
+</div>"""

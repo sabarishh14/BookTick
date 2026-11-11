@@ -309,27 +309,11 @@ html.bt-booting .bt-dir .icon-wrap::before {
 .bt-kv { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .bt-kv > b { font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; color: var(--bt-muted); }
 
-/* ---------- help + about ---------- */
-.bt-help, .bt-about { padding: 20px; border-radius: var(--bt-radius); background: var(--bt-surface);
+/* ---------- about ---------- */
+.bt-about { padding: 20px; border-radius: var(--bt-radius); background: var(--bt-surface);
   border: 1px solid var(--bt-line); box-shadow: var(--bt-shadow); color: var(--bt-text); }
-.bt-help h3, .bt-about h3 { margin: 0 !important; font-size: 1.05rem; font-weight: 750; }
-.bt-help h4 { margin: 4px 0 10px !important; font-size: .78rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--bt-muted); }
-.bt-steps { counter-reset: bt-step; list-style: none !important; padding: 0 !important; margin: 14px 0 18px !important;
-  display: flex; flex-direction: column; gap: 14px; }
-.bt-steps li { counter-increment: bt-step; display: grid; grid-template-columns: 30px 1fr; column-gap: 12px; row-gap: 2px; margin: 0 !important; padding: 0 !important; }
-.bt-steps li::before { content: counter(bt-step); grid-row: span 2; width: 30px; height: 30px; display: grid; place-items: center;
-  border-radius: 10px; background: var(--bt-hot-bg); color: var(--bt-brand); font-weight: 800; font-size: .85rem; }
-.bt-steps b { font-size: .92rem; font-weight: 700; }
-.bt-steps span { font-size: .85rem; line-height: 1.5; color: var(--bt-muted); }
-.bt-help a { color: var(--bt-brand); font-weight: 600; }
-.bt-tips { list-style: none !important; padding: 0 !important; margin: 0 !important; display: flex; flex-direction: column; gap: 10px; }
-.bt-tips li { display: flex; gap: 10px; margin: 0 !important; padding: 10px 12px !important; border-radius: 12px; background: var(--bt-surface-2);
-  font-size: .84rem; line-height: 1.5; color: var(--bt-muted); }
-.bt-tips li::marker { content: none; }
-.bt-tips .bt-i { font-size: 16px; margin-top: 2px; color: var(--bt-brand); }
-.bt-tips code { padding: 1px 6px; border-radius: 6px; background: var(--bt-surface); border: 1px solid var(--bt-line); font-size: .85em; color: var(--bt-text); }
+.bt-about h3 { margin: 0 !important; font-size: 1.05rem; font-weight: 750; }
 .bt-about { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
-.bt-aside { position: sticky; top: 16px; align-self: flex-start; }
 .bt-about p { margin: 0 !important; font-size: .9rem; line-height: 1.55; color: var(--bt-muted); }
 .bt-logo-md { width: 44px; height: 44px; }
 .bt-gh-card { display: flex; align-items: center; gap: 12px; width: 100%; margin-top: 6px; padding: 10px 14px 10px 10px;
@@ -598,3 +582,22 @@ a.bt-show:hover { border-color: var(--bt-brand); transform: translateY(-1px); bo
 .bt-health dd { margin: 2px 0 0 !important; font-size: .9rem; font-weight: 600; color: var(--bt-text); }
 .bt-admin-row { align-items: flex-end !important; }
 @media (max-width: 640px) { .bt-health { grid-template-columns: 1fr; } }
+
+/* ---------- new watcher form + how to use tab ---------- */
+.bt-form { max-width: 880px; margin: 0 auto; }
+.bt-guide { max-width: 880px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; color: var(--bt-text); }
+.bt-guide section { padding: 20px 22px; border-radius: var(--bt-radius); background: var(--bt-surface);
+  border: 1px solid var(--bt-line); box-shadow: var(--bt-shadow); font-size: .94rem; line-height: 1.6; }
+.bt-guide h2 { margin: 0 0 10px !important; font-size: 1.08rem !important; font-weight: 750; letter-spacing: -.01em; color: var(--bt-text) !important; }
+.bt-guide p { margin: 0 0 10px !important; } .bt-guide p:last-child { margin-bottom: 0 !important; }
+.bt-guide ol, .bt-guide ul { margin: 0 !important; padding-left: 1.3em !important; }
+.bt-guide li { margin: 0 0 8px !important; } .bt-guide li:last-child { margin-bottom: 0 !important; }
+.bt-guide b { font-weight: 700; }
+.bt-guide code { padding: 1px 6px; border-radius: 6px; background: var(--bt-surface-2); border: 1px solid var(--bt-line); font-size: .86em; color: var(--bt-text); }
+.bt-guide .alerts { display: grid; gap: 10px; padding: 0 !important; list-style: none !important; }
+.bt-guide .alerts li { margin: 0 !important; padding: 12px 14px; border-radius: 12px; background: var(--bt-surface-2); }
+.bt-guide .alerts li::marker { content: none; }
+.bt-guide .alerts li > b:first-child { display: block; }
+.bt-guide .bt-guide-after { margin-top: 12px !important; }
+.bt-guide .tag { display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--bt-hot-bg); color: var(--bt-brand);
+  font-size: .82rem; font-weight: 700; }

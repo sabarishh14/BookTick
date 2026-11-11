@@ -37,7 +37,7 @@ class Cards(unittest.TestCase):
 
 class Page(unittest.TestCase):
     def test_header_links_the_guide_and_only_the_header_credits_the_author(self):
-        self.assertIn('href="/help" target="_blank"', views.header_html())
+        self.assertIn('data-bt-goto="tab-guide"', views.header_html())
         self.assertIn(views.AUTHOR_NAME, views.header_html())
         self.assertNotIn(views.AUTHOR_NAME, views.footer_html())
         self.assertIn("isn't affiliated with District", views.footer_html())

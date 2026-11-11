@@ -463,3 +463,11 @@
     setTimeout(() => { if (document.activeElement === input && input.value) input.select(); }, 0);
   });
 })();
+
+// The header's "How to use" button opens the How to use tab.
+document.addEventListener("click", (e) => {
+  const go = e.target.closest("[data-bt-goto]");
+  if (!go) return;
+  const tab = document.getElementById(go.dataset.btGoto + "-button");
+  if (tab) { tab.click(); tab.scrollIntoView({ behavior: "smooth", block: "start" }); }
+});

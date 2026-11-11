@@ -6,7 +6,6 @@ storage.py saves them, access.py decides who can see and change what, views.py a
 handlers.py build the page, and static/ holds its CSS and JS.
 """
 import gradio as gr
-from fastapi.responses import HTMLResponse
 
 from booktick import handlers as h
 from booktick.actions import register as register_actions
@@ -19,7 +18,7 @@ from booktick.district import city_label
 from booktick.engine import start_engine
 from booktick.storage import start_storage
 from booktick.theme import CSS, HEAD, favicon_file, theme
-from booktick.views import (HELP_HTML, about_html, admin_status_html, cinema_skeleton, date_picker_html,
+from booktick.views import (about_html, admin_status_html, cinema_skeleton, date_picker_html,
                             engine_note_html, footer_html, header_html, icon, logs_skeleton, status_skeleton,
                             step_head, watchers_skeleton)
 
@@ -68,7 +67,7 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
         # --- New watcher -----------------------------------------------------
         with gr.Tab("New watcher", id="new", elem_id="tab-new"):
             with gr.Row(equal_height=False):
-                with gr.Column(scale=3, min_width=340, elem_classes="bt-stack"):
+                with gr.Column(min_width=340, elem_classes=["bt-stack", "bt-form"]):
                     with gr.Column(elem_classes="bt-step"):
                         gr.HTML(step_head("1", "Pick your show", "Choose your city and cinema, then the movie you're waiting for."))
                         with gr.Row():
@@ -143,8 +142,6 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
                             add_task_btn = gr.Button("Start watching", variant="primary", scale=2, min_width=180)
                         add_result_lbl = gr.HTML(elem_id="bt-add-result")
 
-                with gr.Column(scale=2, min_width=300, elem_classes="bt-aside"):
-                    gr.HTML(HELP_HTML, elem_classes="bt-root-html")
 
         # --- Watchers --------------------------------------------------------
         with gr.Tab("Watchers", id="watchers", elem_id="tab-watchers") as watchers_tab:
@@ -157,6 +154,10 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
                 copy_log_btn = gr.Button("Copy log", size="sm", elem_id="bt-copy-log", scale=0, min_width=110)
                 clear_logs_btn = gr.Button("Clear log", size="sm", scale=0, min_width=110, visible=False)
             log_box = gr.HTML(logs_skeleton(), elem_id="bt-log")
+
+        # --- How to use ------------------------------------------------------
+        with gr.Tab("How to use", id="guide", elem_id="tab-guide"):
+            gr.HTML(GUIDE_HTML, elem_classes="bt-root-html")
 
         # --- Settings --------------------------------------------------------
         with gr.Tab("Settings", id="settings", elem_id="tab-settings"):
@@ -274,5 +275,4 @@ demo.queue(default_concurrency_limit=8).launch(server_name="0.0.0.0", server_por
                                                prevent_thread_lock=True)
 register_actions(demo.app)  # the addresses the buttons in alerts call (see booktick/actions.py)
 register_seatmap(demo.app)  # seat map images (see booktick/seatmap.py)
-demo.app.add_api_route("/help", lambda: HTMLResponse(GUIDE_HTML), methods=["GET"], include_in_schema=False)
 demo.block_thread()

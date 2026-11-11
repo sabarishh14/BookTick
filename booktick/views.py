@@ -190,9 +190,9 @@ def header_html():
     </div>
   </div>
   <div class="bt-hero-side">
-    <a class="bt-howto" href="/help" target="_blank" rel="noopener" title="How to use BookTick (opens in a new tab)">
+    <button type="button" class="bt-howto" data-bt-goto="tab-guide" title="How to use BookTick">
       {icon("info")}<span>How to use</span>
-    </a>
+    </button>
     <button type="button" class="bt-theme" data-bt-theme aria-label="Switch between light and dark mode" title="Light / dark mode">
       {icon("moon", "bt-i-moon")}{icon("sun", "bt-i-sun")}
     </button>
@@ -220,25 +220,6 @@ RESTART_TIP = (
     "Watchers are wiped when this Space restarts or goes to sleep after a long time without visitors. "
     "If you're waiting days, check back now and then."
 )
-
-HELP_HTML = f"""
-<aside class="bt-help">
-  <h3>How it works</h3>
-  <ol class="bt-steps">
-    <li><b>Pick your city and cinema</b><span>Every cinema on <a href="https://www.district.in" target="_blank" rel="noopener noreferrer">District</a> is listed. Pick <em>Any cinema</em> to hear the moment your movie opens anywhere in the city.</span></li>
-    <li><b>Pick the movie, format, time and dates</b><span>Bookings not open yet? Type the movie's name. Tap <em>Preview shows</em> to see what's listed right now.</span></li>
-    <li><b>Choose where to get alerts</b><span>ntfy is quickest: install the app, subscribe to a topic, and enter the same topic here.</span></li>
-    <li><b>Send a test, then start watching</b><span>When bookings open you get an alert, plus reminders. Tap it to open the theatre's page. BookTick keeps watching and tells you if seats free up, or if bookings close and reopen, until you tap <em>Booked it</em> in an alert.</span></li>
-  </ol>
-  <h4>Good to know</h4>
-  <ul class="bt-tips">
-    <li>{icon("user")}<span>Your watchers are private to this browser. To manage them on another device, use <em>Copy my link</em> on the Watchers tab and open it there.</span></li>
-    <li>{icon("lock")}<span>Use a topic name nobody would guess, like <code>arun_tickets_982</code>. Anyone who knows it can read your alerts.</span></li>
-    <li>{icon("alert")}<span>{RESTART_TIP}</span></li>
-    <li>{icon("clock")}<span>All times are Indian Standard Time.</span></li>
-  </ul>
-</aside>"""
-
 
 def about_html():
     return f"""
