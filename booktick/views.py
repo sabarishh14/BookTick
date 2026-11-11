@@ -333,11 +333,21 @@ def channel_names(task):
             if task.get(key)]
 
 
-def channel_chips(task):
+def channel_chips(task, detailed=False):
+    """The watcher's alert channels. Its owner and admins also see where each one goes: the ntfy
+    topic and Telegram chat in full, but only the end of a Discord webhook and never a bot token,
+    since those would let anyone send messages through them."""
     names = channel_names(task)
     if not names:
         return '<span class="bt-chan none">No alert channel</span>'
-    return "".join(f'<span class="bt-chan">{n}</span>' for n in names)
+    if not detailed:
+        return "".join(f'<span class="bt-chan">{n}</span>' for n in names)
+    where = {
+        "ntfy": task.get("ntfy_topic") or "",
+        "Telegram": f"chat {task.get('telegram_chat_id') or ''}",
+        "Discord": f"webhook …{str(task.get('discord_webhook') or '')[-4:]}",
+    }
+    return "".join(f'<span class="bt-chan">{n} · <code>{esc(where[n])}</code></span>' for n in names)
 
 
 def slots_label(slots):
@@ -363,11 +373,18 @@ def seatmap_link(task):
             f'{icon("seat")}Seat map when bookings opened · {esc(task.get("seatmap_at") or "")}{icon("external")}</a>')
 
 
+def admin_meta(task_id, task):
+    """For admins: when the watcher was added, and its id (the same one the database uses)."""
+    added = f"Added {esc(task.get('created_at') or '')} · " if task.get("created_at") else ""
+    return f'<div class="bt-admin-meta">{added}Watcher <code>{esc(task_id)}</code></div>'
+
+
 def watcher_card(task_id, t, session):
     status = t.get("status", "")
     label, tone, group = STATUS_META.get(status, (status or "Unknown", "paused", "finished"))
     movie = esc(watcher_title(t))
     owner = esc(t.get("user_label") or "Watcher")
+    mine = bool(t.get("owner")) and t.get("owner") == session.get("owner")  # people see their own topics
     if session.get("admin") and t.get("owner") != session.get("owner"):
         owner += " · not yours"
     fmt = str(t.get("format_filter") or "ANY")
@@ -432,7 +449,8 @@ def watcher_card(task_id, t, session):
   <div class="bt-phase {phase_tone}"><span>{esc(phase)}</span><b>{plural(sent, "alert")} sent</b></div>
   {seatmap_link(t)}
   {last_html}
-  <div class="bt-chans">{icon("bell")}{channel_chips(t)}</div>
+  <div class="bt-chans">{icon("bell")}{channel_chips(t, detailed=bool(session.get("admin") or mine))}</div>
+  {admin_meta(task_id, t) if session.get("admin") else ""}
   <div class="bt-actions">{"".join(actions)}</div>
 </article>"""
 

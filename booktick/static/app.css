@@ -414,6 +414,8 @@ html[data-bt-view="finished"] .bt-filter-empty[data-for="finished"] { display: b
 .bt-chans > .bt-i { font-size: 14px; }
 .bt-chan { padding: 2px 8px; border-radius: 999px; background: var(--bt-surface-2); border: 1px solid var(--bt-line); font-weight: 650; color: var(--bt-text); }
 .bt-chan.none { color: var(--bt-err); }
+.bt-chan code, .bt-admin-meta code { font-family: var(--font-mono); font-size: .92em; overflow-wrap: anywhere; }
+.bt-admin-meta { font-size: .76rem; color: var(--bt-muted); }
 .bt-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; padding-top: 12px; border-top: 1px solid var(--bt-line); }
 .bt-actions .bt-btn.primary { flex: 1 1 auto; }
 .bt-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 48px 20px; text-align: center;
