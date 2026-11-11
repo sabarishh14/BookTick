@@ -496,3 +496,17 @@ document.addEventListener("click", (e) => {
   window.addEventListener("resize", fade);
   const wait = setInterval(() => { if (nav()) { clearInterval(wait); fade(); } }, 300);
 })();
+
+// On phones, tapping a dropdown scrolls it near the top of the screen, so its list
+// opens below it with room to spare instead of covering the page above.
+document.addEventListener("focusin", (e) => {
+  const input = e.target;
+  if (window.innerWidth > 640 || !(input instanceof HTMLInputElement) || !input.closest(".bt-dd")) return;
+  const box = input.closest(".bt-dd");
+  const top = box.getBoundingClientRect().top;
+  if (top > window.innerHeight * 0.3) {
+    window.scrollBy({ top: top - 72 });
+    // Gradio places the list when it opens; nudge it to measure again after the scroll.
+    requestAnimationFrame(() => window.dispatchEvent(new Event("scroll")));
+  }
+});

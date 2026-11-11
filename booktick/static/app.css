@@ -621,3 +621,18 @@ a.bt-show:hover { border-color: var(--bt-brand); transform: translateY(-1px); bo
   .bt-guide .alerts { padding-left: 0 !important; }
   .bt-guide .alerts li { padding: 10px 12px; }
 }
+
+/* ---------- phones: dropdown lists and the activity log ---------- */
+@media (max-width: 640px) {
+  .bt-dd ul.options { max-height: min(46vh, 340px) !important; }
+  .bt-dd ul.options li.item { padding: 9px 10px !important; font-size: .88rem !important; line-height: 1.35 !important; }
+  .bt-log-bar { flex-wrap: wrap !important; gap: 10px !important; }
+  .bt-log-bar > :first-child { flex: 1 1 100% !important; min-width: 0 !important; }
+  .bt-log-bar > button { flex: 1 1 0 !important; min-width: 0 !important; }
+  #bt-log { max-height: 70vh; padding: 4px !important; }
+  .bt-log-row { gap: 2px; padding: 8px 10px !important; }
+  .bt-log-row + .bt-log-row { border-top: 1px solid var(--bt-line); border-radius: 0; }
+  .bt-log-row time { font-size: .7rem; letter-spacing: .02em; }
+  .bt-log-list { font-family: var(--font-sans) !important; }
+  .bt-log-row span { font-size: .84rem; line-height: 1.45; }
+}
