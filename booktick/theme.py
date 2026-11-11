@@ -109,6 +109,8 @@ ICON_SVGS = {"trash": f'<svg class="bt-i" viewBox="0 0 24 24" aria-hidden="true"
 HEAD = "\n".join([
     f'<link rel="icon" type="image/svg+xml" href="{FAVICON}">',
     '<meta name="theme-color" content="#12132a">',
+    # Gradio scopes app.css inside the page, so the page's own side padding is set here.
+    "<style>@media (max-width: 640px) { gradio-app .gradio-container.app { padding-left: 12px !important; padding-right: 12px !important; } }</style>",
     f"<script>window.BT_ICONS = {json.dumps(ICON_SVGS)};</script>",
     "<script>",
     read_static("app.js"),

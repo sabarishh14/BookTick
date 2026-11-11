@@ -469,5 +469,30 @@ document.addEventListener("click", (e) => {
   const go = e.target.closest("[data-bt-goto]");
   if (!go) return;
   const tab = document.getElementById(go.dataset.btGoto + "-button");
-  if (tab) { tab.click(); tab.scrollIntoView({ behavior: "smooth", block: "start" }); }
+  if (tab) { tab.click(); document.getElementById("bt-tabs").scrollIntoView({ behavior: "smooth", block: "start" }); }
 });
+
+// On phones the tab bar scrolls sideways: keep the open tab in view, and fade the
+// right edge only while more tabs are hidden there.
+(() => {
+  const nav = () => document.querySelector("#bt-tabs > .tab-nav");
+  const fade = () => {
+    const n = nav();
+    if (n) n.classList.toggle("bt-scrolled-end", n.scrollLeft + n.clientWidth >= n.scrollWidth - 4);
+  };
+  // Gradio rebuilds the tab buttons when the tab changes, so look up the selected one afterwards.
+  const reveal = () => {
+    const n = nav(), btn = n && n.querySelector("button.selected");
+    if (!btn || n.scrollWidth <= n.clientWidth) return;
+    const left = btn.getBoundingClientRect().left - n.getBoundingClientRect().left + n.scrollLeft, right = left + btn.offsetWidth;
+    if (left < n.scrollLeft) n.scrollTo({ left: left - 8 });
+    else if (right > n.scrollLeft + n.clientWidth) n.scrollTo({ left: right - n.clientWidth + 8 });
+    fade();
+  };
+  document.addEventListener("click", (e) => {
+    if (e.target.closest("#bt-tabs > .tab-nav button")) setTimeout(reveal, 50);
+  });
+  document.addEventListener("scroll", (e) => { if (e.target === nav()) fade(); }, true);
+  window.addEventListener("resize", fade);
+  const wait = setInterval(() => { if (nav()) { clearInterval(wait); fade(); } }, 300);
+})();

@@ -601,3 +601,23 @@ a.bt-show:hover { border-color: var(--bt-brand); transform: translateY(-1px); bo
 .bt-guide .bt-guide-after { margin-top: 12px !important; }
 .bt-guide .tag { display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--bt-hot-bg); color: var(--bt-brand);
   font-size: .82rem; font-weight: 700; }
+
+/* ---------- phones: tabs scroll sideways, tighter header, guide and gutters ---------- */
+@media (max-width: 640px) {
+  .bt-stat-icon { display: none !important; }
+  .bt-stat { padding: 12px 14px !important; }
+  .bt-hero-side { width: 100%; }
+  .bt-gh { margin-left: auto; }
+  .bt-gh-text b, .bt-gh-text small { white-space: nowrap; }
+  #bt-tabs > .tab-nav { width: 100%; overflow-x: auto; scrollbar-width: none;
+    -webkit-mask-image: linear-gradient(90deg, #000 85%, transparent); mask-image: linear-gradient(90deg, #000 85%, transparent); }
+  #bt-tabs > .tab-nav.bt-scrolled-end { -webkit-mask-image: none; mask-image: none; }
+  #bt-tabs > .tab-nav::-webkit-scrollbar { display: none; }
+  #bt-tabs > .tab-nav button { flex: none !important; white-space: nowrap; padding: 8px 12px; }
+  .bt-guide { gap: 10px; }
+  .bt-guide section { padding: 16px; font-size: .9rem; line-height: 1.55; }
+  .bt-guide h2 { font-size: 1rem !important; }
+  .bt-guide ol, .bt-guide ul { padding-left: 1.1em !important; }
+  .bt-guide .alerts { padding-left: 0 !important; }
+  .bt-guide .alerts li { padding: 10px 12px; }
+}
