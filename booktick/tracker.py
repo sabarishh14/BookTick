@@ -136,11 +136,14 @@ def observe(task, place, shows):
             start = s["start"].timestamp()
             rec = track["shows"].get(key)
             if rec is None:
-                if start <= now or key in track["skipped"]:
+                if start <= now:
                     continue
                 if len(track["shows"]) >= MAX_TRACKED_SHOWS:
-                    track["skipped"].append(key)
+                    if key not in track["skipped"]:
+                        track["skipped"].append(key)
                     continue
+                if key in track["skipped"]:
+                    track["skipped"].remove(key)
                 rec = track["shows"][key] = {
                     "title": s.get("title") or "Movie", "format": str(s.get("format") or ""),
                     "audi": str(s.get("audi") or ""), "start": s["start"].isoformat(), "total": s.get("total"),
@@ -604,6 +607,7 @@ def report_page(task, report):
         return PAGE.format(title=f"{APP_NAME} report", body="<h1>Report not found</h1><p>It may have been deleted.</p>")
     status = ("Final report" if report["final"]
               else f"So far · updated {clock_at(report['at'])} · the final report comes after the last show starts")
+    status += f" · {plural(len(report['shows']), 'show')}, {plural(report['maps'], 'seat snapshot')}"
     insight_items = "".join(f"<li>{esc(line)}</li>" for line in report["insights"])
     cards = "".join(show_card(s) for s in report["shows"])
     body = f"""

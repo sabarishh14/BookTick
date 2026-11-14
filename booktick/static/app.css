@@ -640,6 +640,7 @@ a.bt-show:hover { border-color: var(--bt-brand); transform: translateY(-1px); bo
 
 /* ---------- seat tracker cards ---------- */
 .bt-trackers-title { margin: 0 0 12px; }
+.bt-live-root[data-region="trackers"] { max-width: 880px; margin: 0 auto; }
 .bt-live-root[data-region="trackers"]:not(:empty) { margin-bottom: 18px; }
 .bt-tstats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .bt-tstats > div { padding: 8px 10px; border-radius: 12px; background: var(--bt-surface-2); }

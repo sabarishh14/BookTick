@@ -35,7 +35,7 @@ MAX_SEATMAPS = 8             # seat maps sent when bookings open: one per matchi
 
 # --- Seat tracker ---------------------------------------------------------------
 TRACK_DAYS_AHEAD = 7         # how far ahead a tracker's day can be
-MAX_TRACKED_SHOWS = 12       # shows one tracker follows (earliest first)
+MAX_TRACKED_SHOWS = 60       # shows one tracker follows (seat counts for all; seat snapshots soonest first)
 TRACK_SAVE_EVERY = 600       # seconds between saving a tracker's history to storage
 TRACK_MAP_GAP = 300          # least time between seat snapshots of one show in its last 3 hours…
 TRACK_MAP_GAP_FAR = 1200     # …and before that
