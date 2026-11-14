@@ -2,7 +2,7 @@
 import html as html_lib
 import re
 
-from . import access, district, engine, seatmap
+from . import access, district, engine, seatmap, tracker
 from .config import (ADMIN_KEY, APP_NAME, APP_TAGLINE, AUTHOR_NAME, DATABASE_URL, GITHUB_AVATAR, GITHUB_URL,
                      MAX_RANGE_DAYS, TIME_SLOTS)
 from .core import (ago, date_is_past, dates_label, fmt_clock, fmt_price, logs_for, plural, shorten, state, task_dates,
@@ -190,7 +190,7 @@ def header_html():
     </div>
   </div>
   <div class="bt-hero-side">
-    <button type="button" class="bt-howto" data-bt-goto="tab-guide" title="How to use BookTick">
+    <button type="button" class="bt-howto" data-bt-goto="guide" title="How to use BookTick">
       {icon("info")}<span>How to use</span>
     </button>
     <button type="button" class="bt-theme" data-bt-theme aria-label="Switch between light and dark mode" title="Light / dark mode">
@@ -294,10 +294,10 @@ EMPTY_FILTER_TEXT = {
 }
 
 
-def action_button(action, task_id, label, icon_name, kind="", title=None, confirm=None):
+def action_button(action, task_id, label, icon_name, kind="", title=None, confirm=None, what="watcher"):
     attrs = f'data-bt-action="{action}" data-bt-id="{esc(task_id)}" title="{esc(title or label)}"'
     if confirm:
-        attrs += (f' data-bt-confirm="{esc(confirm)}" data-bt-confirm-title="Delete this watcher?"'
+        attrs += (f' data-bt-confirm="{esc(confirm)}" data-bt-confirm-title="Delete this {what}?"'
                   f' data-bt-confirm-ok="Delete"')
     return f'<button type="button" class="bt-btn {kind}" {attrs}>{icon(icon_name)}<span>{label}</span></button>'
 
@@ -429,6 +429,93 @@ def watcher_card(task_id, t, session):
 </article>"""
 
 
+# --- Seat tracker cards -------------------------------------------------------
+TRACKER_STATUS = {
+    "Active": ("Tracking", "active"),
+    "Paused": ("Paused", "paused"),
+    "Done": ("Report sent", "done"),
+    "Expired": ("Date passed", "expired"),
+}
+
+
+def tracker_card(task_id, t, session):
+    status = t.get("status", "")
+    label, tone = TRACKER_STATUS.get(status, (status or "Unknown", "paused"))
+    info = tracker.card_info(task_id)
+    mine = bool(t.get("owner")) and t.get("owner") == session.get("owner")
+    owner = esc(t.get("user_label") or "Tracker")
+    if session.get("admin") and not mine:
+        owner += " · not yours"
+    tags = [f'<span class="bt-tag">{icon("calendar")}{esc(dates_label(t.get("target_date")))}</span>']
+    if info.get("next") and status == "Active":
+        tags.append(f'<span class="bt-tag">{icon("clock")}Next show {esc(info["next"])}</span>')
+    stats = [(info.get("shows", 0), "shows"), (info.get("released", 0), "seats came back"),
+             (info.get("releases", 0), "releases")]
+    stats_html = "".join(f"<div><b>{n}</b><span>{esc(text)}</span></div>" for n, text in stats)
+
+    if status == "Done":
+        last_html = (f'<div class="bt-last ok">{icon("check")}<div><b>Report sent</b>'
+                     f'<small>{esc(t.get("report_at") or "")}</small></div></div>')
+    elif info.get("last"):
+        last_html = (f'<div class="bt-last hot">{icon("zap")}<div><b>{esc(info["last"])}</b>'
+                     f'<small>{esc(t.get("last_result") or "")}</small></div></div>')
+    elif t.get("last_checked"):
+        rel = ago(t.get("last_checked_ts"))
+        when = f"Checked {esc(t['last_checked'])} IST" + (f" · {rel}" if rel else "")
+        last_html = (f'<div class="bt-last">{icon("clock")}<div><b>{esc(t.get("last_result") or "Tracking")}</b>'
+                     f'<small>{when}</small></div></div>')
+    else:
+        waiting = "Waiting for the first check…" if status == "Active" else "Not checked yet"
+        last_html = f'<div class="bt-last">{icon("clock")}<div><b>{waiting}</b><small>Added {esc(t.get("created_at", ""))}</small></div></div>'
+
+    actions = []
+    href = tracker.report_url(t, absolute=False)
+    if href:
+        text = "Report" if status == "Done" else "Report so far"
+        actions.append(f'<a class="bt-btn primary" href="{esc(href)}" target="_blank" rel="noopener">'
+                       f'{icon("activity")}<span>{text}</span></a>')
+    if status == "Active":
+        actions.append(action_button("pause", task_id, "Pause", "pause", "", "Stop tracking for now"))
+    elif status == "Paused":
+        actions.append(action_button("pause", task_id, "Resume", "play", "", "Start tracking again"))
+    actions.append(action_button(
+        "delete", task_id, "Delete", "trash", "danger", "Delete this tracker", what="tracker",
+        confirm=f"BookTick stops tracking {tracker.tracker_title(t)} at {tracker.place_of(t)} and deletes its report. "
+                "This can't be undone.",
+    ))
+    pulse = '<span class="bt-pulse"></span>' if status == "Active" else ""
+    return f"""
+<article class="bt-card" data-status="{esc(status)}">
+  <div class="bt-card-head">
+    <span class="bt-badge s-{tone}">{pulse}{label}</span>
+    <span class="bt-owner">{icon("user")}{owner}</span>
+  </div>
+  <div>
+    <h3 class="bt-card-title">{esc(tracker.tracker_title(t))}</h3>
+    <div class="bt-card-cinema">{place_html(t)}</div>
+  </div>
+  <div class="bt-tags">{"".join(tags)}</div>
+  <div class="bt-tstats">{stats_html}</div>
+  {last_html}
+  <div class="bt-chans">{icon("bell")}{channel_chips(t, detailed=bool(session.get("admin") or mine))}</div>
+  {admin_meta(task_id, t) if session.get("admin") else ""}
+  <div class="bt-actions">{"".join(actions)}</div>
+</article>"""
+
+
+def trackers_html(session):
+    """The seat trackers this session may see, above the form to make one."""
+    session = session or {}
+    items = access.visible_tasks(session, kind="tracker")
+    if not items:
+        return ""
+    cards = "".join(tracker_card(tid, t, session)
+                    for tid, t in sorted(items, key=lambda i: i[1].get("created_ts", 0), reverse=True))
+    return (f'<div class="bt-section-title bt-trackers-title"><h3>Your seat trackers</h3>'
+            f'<p>Each sends its report after its last show starts. The report link works any time.</p></div>'
+            f'<div class="bt-grid">{cards}</div>')
+
+
 DEVICE_LINK = (f'<button type="button" class="bt-btn" data-bt-device-link '
                f'title="A link that opens your watchers on another device. Anyone with it can manage them, so keep it to yourself.">'
                f'{icon("link")}<span>Copy my link</span></button>')
@@ -483,7 +570,7 @@ def watchers_html(session):
 # --- Activity log -------------------------------------------------------------
 LOG_TONES = (("🔥", "hot"), ("⚠", "warn"), ("❌", "warn"), ("Engine error", "warn"), ("✅", "ok"),
              ("➕", "info"), ("🔄", "info"), ("🧪", "info"), ("▶", "info"), ("🗄", "info"), ("⏸", "muted"),
-             ("🗑", "muted"), ("📅", "muted"), ("🔁", "hot"), ("🎟", "hot"), ("🎉", "ok"), ("👍", "info"))
+             ("🗑", "muted"), ("📅", "muted"), ("🔁", "hot"), ("🎟", "hot"), ("🎉", "ok"), ("👍", "info"), ("📊", "info"))
 
 
 def logs_html(session):
@@ -580,9 +667,12 @@ def engine_note_html(session):
         return note
     h = engine.health()
     with tasks_lock:
-        tasks = list(state["tasks"].values())
-    people = len({t.get("owner") for t in tasks if t.get("owner")})
+        everything = list(state["tasks"].values())
+    tasks = [t for t in everything if not tracker.is_tracker(t)]
+    trackers = [t for t in everything if tracker.is_tracker(t)]
+    people = len({t.get("owner") for t in everything if t.get("owner")})
     rows = [("Watchers", f"{sum(1 for t in tasks if t.get('status') == 'Active')} watching · {len(tasks)} in total"),
+            ("Seat trackers", f"{sum(1 for t in trackers if t.get('status') == 'Active')} tracking · {len(trackers)} in total"),
             ("People", str(people)),
             ("District pages", f"{h['pages']} watched · {h['inflight']} loading · {h['failing']} failing"),
             ("Checks", f"{state['check_count']} since the last restart")]

@@ -166,12 +166,12 @@ html.bt-booting .bt-dir .icon-wrap::before {
 .bt-step-head h3 { margin: 0 !important; font-size: 1.08rem; font-weight: 750; color: var(--bt-text); letter-spacing: -.01em; }
 .bt-step-head p { margin: 2px 0 0 !important; font-size: .86rem; color: var(--bt-muted); }
 .bt-stack { gap: 16px !important; }
-#bt-channel-tabs > .tab-nav { display: flex; gap: 4px; width: fit-content; max-width: 100%; padding: 4px; border: none !important;
+#bt-channel-tabs > .tab-nav, #bt-tr-channel-tabs > .tab-nav { display: flex; gap: 4px; width: fit-content; max-width: 100%; padding: 4px; border: none !important;
   border-radius: 12px; background: var(--bt-surface-2); }
-#bt-channel-tabs > .tab-nav button { margin: 0; padding: 6px 14px; border: none !important; border-radius: 9px !important;
+#bt-channel-tabs > .tab-nav button, #bt-tr-channel-tabs > .tab-nav button { margin: 0; padding: 6px 14px; border: none !important; border-radius: 9px !important;
   background: transparent; color: var(--bt-muted); font-weight: 650; font-size: .86rem; }
-#bt-channel-tabs > .tab-nav button.selected { background: var(--bt-surface); color: var(--bt-text); box-shadow: 0 1px 3px rgba(18, 19, 42, .14); }
-#bt-channel-tabs > .tabitem { padding: 12px 0 0 !important; border: none !important; background: transparent !important; }
+#bt-channel-tabs > .tab-nav button.selected, #bt-tr-channel-tabs > .tab-nav button.selected { background: var(--bt-surface); color: var(--bt-text); box-shadow: 0 1px 3px rgba(18, 19, 42, .14); }
+#bt-channel-tabs > .tabitem, #bt-tr-channel-tabs > .tabitem { padding: 12px 0 0 !important; border: none !important; background: transparent !important; }
 .bt-cinema { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 12px;
   background: var(--bt-surface-2); border: 1px solid var(--bt-line); font-size: .85rem; color: var(--bt-muted); }
 .bt-cinema > .bt-i { font-size: 16px; color: var(--bt-brand); }
@@ -405,6 +405,7 @@ html[data-bt-view="finished"] .bt-filter-empty[data-for="finished"] { display: b
 .bt-last small { display: block; margin-top: 1px; font-size: .76rem; color: var(--bt-muted); }
 .bt-last.hot { background: var(--bt-hot-bg); } .bt-last.hot > .bt-i, .bt-last.hot b { color: var(--bt-hot); }
 .bt-last.warn { background: var(--bt-warn-bg); } .bt-last.warn > .bt-i, .bt-last.warn b { color: var(--bt-warn); }
+.bt-last.ok { background: var(--bt-ok-bg); } .bt-last.ok > .bt-i, .bt-last.ok b { color: var(--bt-ok); }
 .bt-chans { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: .78rem; color: var(--bt-muted); }
 .bt-chans > .bt-i { font-size: 14px; }
 .bt-chan { padding: 2px 8px; border-radius: 999px; background: var(--bt-surface-2); border: 1px solid var(--bt-line); font-weight: 650; color: var(--bt-text); }
@@ -519,10 +520,10 @@ a.bt-show:hover { border-color: var(--bt-brand); transform: translateY(-1px); bo
   .bt-mini { position: static; flex-basis: 100%; justify-content: center; }
   .bt-stat-sub { white-space: normal; }
   .bt-cinema { flex-wrap: wrap; }
-  #bt-tabs > .tab-nav, #bt-channel-tabs > .tab-nav { flex-wrap: nowrap; }
+  #bt-tabs > .tab-nav, #bt-channel-tabs > .tab-nav, #bt-tr-channel-tabs > .tab-nav { flex-wrap: nowrap; }
   #bt-tabs > .tab-nav { width: 100%; }
   #bt-tabs > .tab-nav button { flex: 1 1 auto; padding: 8px 6px; font-size: .84rem; }
-  #bt-channel-tabs > .tab-nav button { padding: 6px 10px; font-size: .82rem; }
+  #bt-channel-tabs > .tab-nav button, #bt-tr-channel-tabs > .tab-nav button { padding: 6px 10px; font-size: .82rem; }
   .bt-grid { grid-template-columns: 1fr; }
   .bt-toolbar-actions { width: 100%; }
   .bt-toolbar-actions .bt-btn { flex: 1; }
@@ -636,3 +637,12 @@ a.bt-show:hover { border-color: var(--bt-brand); transform: translateY(-1px); bo
   .bt-log-list { font-family: var(--font-sans) !important; }
   .bt-log-row span { font-size: .84rem; line-height: 1.45; }
 }
+
+/* ---------- seat tracker cards ---------- */
+.bt-trackers-title { margin: 0 0 12px; }
+.bt-live-root[data-region="trackers"]:not(:empty) { margin-bottom: 18px; }
+.bt-tstats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.bt-tstats > div { padding: 8px 10px; border-radius: 12px; background: var(--bt-surface-2); }
+.bt-tstats b { display: block; font-size: 1.15rem; font-weight: 750; color: var(--bt-text); line-height: 1.2; }
+.bt-tstats span { display: block; font-size: .74rem; line-height: 1.3; color: var(--bt-muted); }
+a.bt-btn { text-decoration: none !important; }

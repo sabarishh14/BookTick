@@ -1,5 +1,5 @@
 """The "How to use" tab: the full guide, opened from the tab bar or the header button."""
-from .config import MAX_RANGE_DAYS, MAX_SEATMAPS, MAX_WATCHERS_PER_PERSON
+from .config import MAX_RANGE_DAYS, MAX_SEATMAPS, MAX_TRACKED_SHOWS, MAX_TRACKERS_PER_PERSON, MAX_WATCHERS_PER_PERSON
 from .views import RESTART_TIP
 
 GUIDE_HTML = f"""
@@ -58,7 +58,22 @@ GUIDE_HTML = f"""
 </section>
 
 <section>
-  <h2>5. Good to know</h2>
+  <h2>5. Track how seats are blocked</h2>
+  <p>Some cinemas hold seats back and release them shortly before the show. The <b>Seat tracker</b> tab follows one
+    cinema's shows for a day (every format, or just one, and every movie or just one) and works out when that happens.</p>
+  <ul>
+    <li>It notes every show's seats left on each check, and reads which seats changed whenever the count moves.</li>
+    <li>After the last show starts, it sends a report to your alert channels: how many seats came back, when (how long
+      before showtime), and where in the hall. The card's <b>Report so far</b> button shows it any time.</li>
+    <li>District only says whether a seat is free or taken. Seats that come back were released by the cinema, or held
+      by someone who didn't finish paying (a few seats, back within minutes). Many seats going at once were held back
+      by the cinema, or booked by a big group.</li>
+    <li>It follows up to {MAX_TRACKED_SHOWS} shows, and you can have {MAX_TRACKERS_PER_PERSON} trackers going at once.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>6. Good to know</h2>
   <ul>
     <li><b>Your watchers belong to this browser.</b> To see them on another device, use <b>Copy my link</b> on the Watchers
       tab and open it there. Keep that link to yourself: anyone with it can manage your watchers. If you clear this

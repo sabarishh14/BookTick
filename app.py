@@ -11,6 +11,7 @@ from booktick import handlers as h
 from booktick.actions import register as register_actions
 from booktick.guide import GUIDE_HTML
 from booktick.seatmap import register as register_seatmap
+from booktick.tracker import register as register_reports
 from booktick.config import (APP_NAME, DEFAULT_CINEMA_LABEL, DEFAULT_CITY, DEFAULT_URL, FORMAT_CHOICES,
                              MAX_INTERVAL, MIN_INTERVAL)
 from booktick.core import state, today_ist
@@ -147,6 +148,53 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
         with gr.Tab("Watchers", id="watchers", elem_id="tab-watchers") as watchers_tab:
             watchers_box = live_region("watchers", watchers_skeleton())
 
+        # --- Seat tracker ----------------------------------------------------
+        with gr.Tab("Seat tracker", id="tracker", elem_id="tab-tracker") as tracker_tab:
+            trackers_box = live_region("trackers", "")
+            with gr.Row(equal_height=False):
+                with gr.Column(min_width=340, elem_classes=["bt-stack", "bt-form"]):
+                    with gr.Column(elem_classes="bt-step"):
+                        gr.HTML(step_head(icon("seat"), "Track how seats are blocked",
+                                          "Some cinemas hold seats back and release them before the show. Pick a cinema "
+                                          "and a day: BookTick notes every time seats come back or go in one go, and "
+                                          "sends you a report after the last show starts."))
+                        with gr.Row():
+                            tr_city = gr.Dropdown(
+                                label="City", choices=[(city_label(DEFAULT_CITY), DEFAULT_CITY)], value=DEFAULT_CITY,
+                                scale=2, min_width=180, elem_classes="bt-dd",
+                            )
+                            tr_cinema = gr.Dropdown(
+                                label="Cinema", choices=[(DEFAULT_CINEMA_LABEL, DEFAULT_URL)], value=DEFAULT_URL,
+                                info="Type part of the name or the area.", scale=3, min_width=240, elem_classes="bt-dd",
+                            )
+                        with gr.Row():
+                            tr_day = gr.Dropdown(label="Day", choices=h.tracker_days(), value=today_ist(),
+                                                 info="Today or the next few days.", min_width=170, elem_classes="bt-dd")
+                            tr_format = gr.Dropdown(label="Format", choices=FORMAT_CHOICES, value="ANY",
+                                                    allow_custom_value=True, info="ANY follows every format.",
+                                                    min_width=150, elem_classes="bt-dd")
+                        tr_movie = gr.Dropdown(label="Movie", choices=[h.ALL_MOVIES], value=h.ALL_MOVIES,
+                                               allow_custom_value=True, elem_classes="bt-dd",
+                                               info="Every movie at the cinema, or just one.")
+                    with gr.Column(elem_classes="bt-step"):
+                        gr.HTML(step_head(icon("bell"), "Where should the report go?", "Fill in one or more, like for alerts."))
+                        tr_name = gr.Textbox(label="Your name", value="Me", max_lines=1,
+                                             info="Shown on the tracker card so you can spot yours.")
+                        with gr.Tabs(elem_id="bt-tr-channel-tabs"):
+                            with gr.Tab("ntfy (easiest)"):
+                                tr_ntfy = gr.Textbox(label="ntfy topic", placeholder="e.g. arun_tickets_982", max_lines=1)
+                            with gr.Tab("Telegram"):
+                                with gr.Row():
+                                    tr_tg_token = gr.Textbox(label="Bot token", type="password", placeholder="123456:ABC-DEF…")
+                                    tr_tg_chat = gr.Textbox(label="Chat ID", placeholder="123456789", max_lines=1)
+                            with gr.Tab("Discord"):
+                                tr_discord = gr.Textbox(label="Webhook URL", placeholder="https://discord.com/api/webhooks/…",
+                                                        max_lines=1)
+                        with gr.Row(elem_classes="bt-cta-row"):
+                            tr_test_btn = gr.Button("Send test alert", variant="secondary", scale=1, min_width=150)
+                            tr_add_btn = gr.Button("Start tracking", variant="primary", scale=2, min_width=180)
+                        tr_result = gr.HTML()
+
         # --- Activity --------------------------------------------------------
         with gr.Tab("Activity", id="activity", elem_id="tab-activity") as activity_tab:
             with gr.Row(elem_classes="bt-log-bar"):
@@ -198,7 +246,8 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
     pick_inputs = [cinema_input, cin_url_input, movie_filter_input, format_filter_input, slots_input, target_date_input]
     channels = [ntfy_topic_input, tg_token_input, tg_chat_input, disc_hook_input]
     admin_views = [engine_controls, unlock_row, lock_btn, clear_logs_btn]
-    live = [status_box, watchers_box, log_box]
+    live = [status_box, watchers_box, log_box, trackers_box]
+    tr_channels = [tr_ntfy, tr_tg_token, tr_tg_chat, tr_discord]
 
     city_input.input(
         h.on_city_change, inputs=[city_input, movie_filter_input],
@@ -223,9 +272,16 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
         outputs=[add_result_lbl, watchers_box, status_box],
     )
 
+    tr_city.input(h.tracker_city_change, inputs=[tr_city], outputs=[tr_cinema, tr_movie])
+    tr_cinema.input(h.tracker_cinema_change, inputs=[tr_city, tr_cinema], outputs=[tr_movie], show_progress="hidden")
+    tr_test_btn.click(h.test_tracker_channels, inputs=[session, tr_name, tr_cinema] + tr_channels, outputs=[tr_result])
+    tr_add_btn.click(h.add_tracker, inputs=[session, tr_name, tr_cinema, tr_day, tr_format, tr_movie] + tr_channels,
+                     outputs=[tr_result, trackers_box])
+    tracker_tab.select(h.refresh_trackers, inputs=[session], outputs=[session, trackers_box], show_progress="hidden")
+
     action_btn.click(
         h.run_watcher_action, inputs=[action_box, session],
-        outputs=[session, status_box, watchers_box, engine_note, toggle_engine_btn],
+        outputs=[session, status_box, watchers_box, engine_note, toggle_engine_btn, trackers_box],
         js=f"(v, s) => [{JS} ? {JS}.take() : '', s]",
         show_progress="hidden", trigger_mode="multiple",
     )
@@ -266,6 +322,9 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
         outputs=[city_input, cinema_input, movie_filter_input, cinema_info],
         show_progress="hidden",
     ).then(None, js=f"() => ({JS} ? {JS}.booted() : [])")  # runs even if loading failed
+    # The tracker's form: its own city and cinema lists, and the coming week (fresh every load).
+    demo.load(h.load_tracker_form, inputs=[tr_city, tr_cinema], outputs=[tr_city, tr_cinema, tr_day, tr_movie],
+              show_progress="hidden")
 
 # --- Launch -------------------------------------------------------------------
 start_storage()
@@ -275,4 +334,5 @@ demo.queue(default_concurrency_limit=8).launch(server_name="0.0.0.0", server_por
                                                prevent_thread_lock=True)
 register_actions(demo.app)  # the addresses the buttons in alerts call (see booktick/actions.py)
 register_seatmap(demo.app)  # seat map images (see booktick/seatmap.py)
+register_reports(demo.app)  # seat tracker reports (see booktick/tracker.py)
 demo.block_thread()

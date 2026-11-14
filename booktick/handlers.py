@@ -8,18 +8,20 @@ import hashlib
 import re
 import time
 import uuid
+from datetime import timedelta
 
 import gradio as gr
 
-from . import access, district, engine
+from . import access, district, engine, tracker
 from .actions import new_token
 from .alerts import describe_results, sample_shows, send_task_notification
-from .config import DEFAULT_CITY, MAX_INTERVAL, MAX_RANGE_DAYS, MIN_INTERVAL, PREVIEW_CACHE, TIME_SLOTS
-from .core import (add_log, dates_label, log_lock, now_ist, parse_dates, plural, shorten, state, task_dates_label,
-                   tasks_lock, today_ist, wake_engine)
+from .config import (DEFAULT_CITY, DEFAULT_URL, MAX_INTERVAL, MAX_RANGE_DAYS, MAX_TRACKED_SHOWS, MIN_INTERVAL,
+                     PREVIEW_CACHE, TIME_SLOTS, TRACK_DAYS_AHEAD)
+from .core import (add_log, date_label, dates_label, log_lock, now_ist, parse_dates, plural, shorten, state,
+                   task_dates_label, tasks_lock, today_ist, wake_engine)
 from .storage import save_tasks
 from .views import (admin_status_html, callout, cinema_card, city_card, engine_note_html, esc, hint, icon,
-                    logs_html, show_groups, status_html, watcher_title, watchers_html)
+                    logs_html, show_groups, status_html, trackers_html, watcher_title, watchers_html)
 
 SLOT_CHOICES = [(label, key) for key, label, _, _ in TIME_SLOTS]
 CITY_PREFIX = "city:"
@@ -70,16 +72,16 @@ def fresh(session, region, html):
 
 
 def live_views(session, force=False):
-    """(status, watchers, log) for this tab, as updates."""
+    """(status, watchers, log, trackers) for this tab, as updates."""
     if force:
         session["sent"] = {}
     return (fresh(session, "status", status_html(session)), fresh(session, "watchers", watchers_html(session)),
-            fresh(session, "log", logs_html(session)))
+            fresh(session, "log", logs_html(session)), fresh(session, "trackers", trackers_html(session)))
 
 
 def poll_status(session):
     if not session or not session.get("owner"):
-        return session, keep(), keep(), keep()
+        return session, keep(), keep(), keep(), keep()
     return (session,) + live_views(session)
 
 
@@ -121,7 +123,7 @@ def admin_login(key, session):
     time.sleep(1)  # slows down guessing
     message = (callout("err", "That key didn't work", "Check the <code>ADMIN_KEY</code> secret on the Space.")
                if access.ADMIN_KEY else admin_status_html(session))
-    return (session, keep(), "", message, keep()) + admin_controls(session) + (keep(), keep(), keep())
+    return (session, keep(), "", message, keep()) + admin_controls(session) + (keep(), keep(), keep(), keep())
 
 
 def admin_logout(session):
@@ -413,14 +415,24 @@ def add_new_watcher(session, user_name, cinema_value, cin_url, movie_names, fmt_
 # ---------------------------------------------------------------------------
 # Buttons on the watcher cards, and the engine
 # ---------------------------------------------------------------------------
+def describe(task):
+    """('the Ramayana watcher', 'watcher') or ('the IMAX shows tracker', 'tracker')."""
+    if tracker.is_tracker(task):
+        return f"the {tracker.tracker_title(task)} tracker", "tracker"
+    return f"the {watcher_title(task)} watcher", "watcher"
+
+
 def toggle_watcher(task):
     status = task.get("status")
+    name, what = describe(task)
     if status not in ("Active", "Paused"):
-        return False, "This watcher has finished. Re-arm it to start again."
+        return False, ("This tracker has sent its report." if what == "tracker"
+                       else "This watcher has finished. Re-arm it to start again.")
     task["status"] = "Paused" if status == "Active" else "Active"
     paused = task["status"] == "Paused"
-    add_log(f"{'⏸' if paused else '▶'} [{task.get('user_label')}] {'paused' if paused else 'resumed'}.", (task.get("owner"),))
-    return True, f"{'Paused' if paused else 'Resumed'} the {watcher_title(task)} watcher."
+    add_log(f"{'⏸' if paused else '▶'} [{task.get('user_label')}] {what} {'paused' if paused else 'resumed'}.",
+            (task.get("owner"),))
+    return True, f"{'Paused' if paused else 'Resumed'} {name}."
 
 
 def rearm_watcher(task):
@@ -440,22 +452,26 @@ def run_watcher_action(payload, session):
     if action == "engine":
         if not session.get("admin"):
             toast(False, "Only the admin can pause checking for everyone.")
-            return (session, keep(), keep(), keep(), keep())
+            return (session, keep(), keep(), keep(), keep(), keep())
         toast(True, flip_engine())
         session.get("sent", {}).clear()
-        return (session,) + live_views(session)[:2] + (engine_note_html(session), engine_button())
+        views = live_views(session)
+        return (session,) + views[:2] + (engine_note_html(session), engine_button(), views[3])
     if action not in ("pause", "rearm", "delete", "test"):
-        return (session, keep(), keep(), keep(), keep())
+        return (session, keep(), keep(), keep(), keep(), keep())
 
     with tasks_lock:
         task = state["tasks"].get(task_id)
         if not access.can_manage(session, task):
-            ok, msg, snapshot = False, "That watcher no longer exists.", None
+            ok, msg, snapshot = False, "That no longer exists.", None
+        elif tracker.is_tracker(task) and action in ("rearm", "test"):
+            ok, msg, snapshot = False, "Trackers can only be paused, resumed or deleted.", None
         elif action == "delete":
             del state["tasks"][task_id]
             save_tasks()
-            add_log(f"🗑️ [{task.get('user_label')}] watcher deleted.", (task.get("owner"),))
-            ok, msg, snapshot = True, f"Deleted the {watcher_title(task)} watcher.", None
+            name, what = describe(task)
+            add_log(f"🗑️ [{task.get('user_label')}] {what} deleted.", (task.get("owner"),))
+            ok, msg, snapshot = True, f"Deleted {name}.", None
         elif action == "test":
             ok, msg, snapshot = True, "", dict(task)
         else:
@@ -468,8 +484,11 @@ def run_watcher_action(payload, session):
     if action == "test" and snapshot:
         ok, msg = send_test(snapshot, session)
     toast(ok, msg)
-    session.get("sent", {}).pop("watchers", None)
-    return (session,) + live_views(session)[:2] + (keep(), keep())
+    sent = session.setdefault("sent", {})
+    sent.pop("watchers", None)
+    sent.pop("trackers", None)
+    views = live_views(session)
+    return (session,) + views[:2] + (keep(), keep(), views[3])
 
 
 def send_test(task, session):
@@ -536,3 +555,132 @@ def refresh_logs(session):
     session = session or {}
     session.setdefault("sent", {}).pop("log", None)
     return session, fresh(session, "log", logs_html(session))
+
+
+# ---------------------------------------------------------------------------
+# Seat trackers
+# ---------------------------------------------------------------------------
+ALL_MOVIES = "All movies"
+
+
+def tracker_days():
+    """Today and the next few days, as (label, YYYY-MM-DD) choices."""
+    today = now_ist().date()
+    return [(date_label(str(today + timedelta(days=i))), str(today + timedelta(days=i))) for i in range(TRACK_DAYS_AHEAD)]
+
+
+def tracker_cinemas(cinemas, city):
+    return [(district.cinema_label(c, city), c["url"]) for c in cinemas]
+
+
+def tracker_movies(cinema):
+    return gr.update(choices=[ALL_MOVIES] + (list(cinema["movies"]) if cinema else []), value=ALL_MOVIES)
+
+
+def load_tracker_form(city, cinema_value):
+    """On page load: cities, the city's cinemas, the coming week, and the cinema's movies."""
+    city = city or DEFAULT_CITY
+    cities = gr.update(choices=district.city_choices(), value=city)
+    days = gr.update(choices=tracker_days(), value=today_ist())
+    try:
+        cinemas = district.city_cinemas(city)
+    except Exception:
+        return cities, keep(), days, keep()
+    cid = district.cinema_id_from_url(cinema_value or DEFAULT_URL)
+    cinema = next((c for c in cinemas if cid and c["id"] == cid), None)
+    return (cities, gr.update(choices=tracker_cinemas(cinemas, city), value=cinema["url"] if cinema else None),
+            days, tracker_movies(cinema))
+
+
+def tracker_city_change(city):
+    try:
+        cinemas = district.city_cinemas(city)
+    except Exception:
+        cinemas = []
+    return gr.update(choices=tracker_cinemas(cinemas, city), value=None), tracker_movies(None)
+
+
+def tracker_cinema_change(city, cinema_value):
+    try:
+        cinemas = district.city_cinemas(city)
+    except Exception:
+        cinemas = []
+    return tracker_movies(next((c for c in cinemas if c["url"] == cinema_value), None))
+
+
+def test_tracker_channels(session, user_name, cinema_value, ntfy_top, tg_tok, tg_chat, disc_url):
+    return test_user_notification(session, user_name, None, cinema_value, ntfy_top, tg_tok, tg_chat, disc_url)
+
+
+def tracker_plan(url, day, filters):
+    """(cinema name, note on what it will follow, problem) from the cinema's page right now."""
+    try:
+        place, shows = page_shows("cinema", district.query_url(url, day))
+    except Exception:
+        return None, "Couldn't load the cinema's page just now, so it keeps trying.", None
+    now = time.time()
+    upcoming = [s for s in shows if engine.wanted(filters, s, day) and s["start"] and s["start"].timestamp() > now]
+    if not upcoming:
+        if day == today_ist():
+            return place, None, "Every matching show today has started, or none match. Pick another day, format or movie."
+        return place, "No matching shows are listed for that day yet. It starts as soon as they are.", None
+    count = min(len(upcoming), MAX_TRACKED_SHOWS)
+    first, last = upcoming[0]["start"], upcoming[count - 1]["start"]
+    note = (f"It follows {plural(count, 'show')}, {first.strftime('%I:%M %p').lstrip('0')} to "
+            f"{last.strftime('%I:%M %p').lstrip('0')}")
+    if len(upcoming) > MAX_TRACKED_SHOWS:
+        note += f" (the first {MAX_TRACKED_SHOWS} of {len(upcoming)}: pick a format or movie to narrow it down)"
+    return place, note + ".", None
+
+
+def add_tracker(session, user_name, cinema_value, day, fmt_val, movie, ntfy_top, tg_tok, tg_chat, disc_url,
+                request: gr.Request):
+    session = session or {}
+    fail = lambda title, body: (callout("err", title, body), keep())  # noqa: E731
+    if not session.get("owner"):
+        return fail("Reload the page", "BookTick couldn't tell which trackers are yours. Reload and try again.")
+    url = district.clean_cinema_url(cinema_value)
+    if not url:
+        return fail("Which cinema?", "Pick a cinema from the list.")
+    if day not in {d for _, d in tracker_days()}:
+        return fail("Pick a day", f"Choose today or one of the next {TRACK_DAYS_AHEAD - 1} days.")
+    channels, error = clean_channels(ntfy_top, tg_tok, tg_chat, disc_url)
+    if error:
+        return fail("Where should the report go?", error)
+    limit = access.tracker_limit_error(session)
+    if limit:
+        return fail("Can't add another tracker yet", esc(limit))
+    movie = "" if not movie or movie == ALL_MOVIES else movie_text(movie)
+    fmt = (fmt_val or "ANY").strip().upper() or "ANY"
+    filters = {"movie_filter": movie, "format_filter": fmt, "time_slots": []}
+    place, note, problem = tracker_plan(url, day, filters)
+    if problem:
+        return fail("Nothing left to track that day", esc(problem))
+
+    task_id = "t_" + uuid.uuid4().hex[:10]
+    name = shorten((user_name or "").strip() or "Me", 40)
+    task = dict(
+        channels, **filters,
+        id=task_id, kind="tracker", owner=session["owner"], network=access.network_id(request), user_label=name,
+        scope="cinema", city=None, cinema_url=url,
+        cinema_name=place or district.known_cinema_name(url) or district.cinema_name_from_url(url),
+        target_date=day, target_date_to=day, status="Active", report_token=tracker.new_token(),
+        created_at=now_ist().strftime("%d-%b %H:%M"), created_ts=time.time(),
+    )
+    with tasks_lock:
+        state["tasks"][task_id] = task
+        save_tasks()
+    wake_engine.set()
+    title, where = tracker.tracker_title(task), tracker.place_of(task)
+    add_log(f"📊 [{name}] tracking seats for {title} at {where}, {date_label(day)}.", (task["owner"],))
+    msg = callout("ok", f"Tracking {esc(title)} at {esc(where)}",
+                  f"{esc(date_label(day))}. {esc(note)} The report goes to your channels after the last show starts. "
+                  "Its card is at the top of this tab.")
+    session.setdefault("sent", {}).pop("trackers", None)
+    return msg, fresh(session, "trackers", trackers_html(session))
+
+
+def refresh_trackers(session):
+    session = session or {}
+    session.setdefault("sent", {}).pop("trackers", None)
+    return session, fresh(session, "trackers", trackers_html(session))

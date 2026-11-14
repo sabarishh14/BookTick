@@ -92,8 +92,10 @@
   BT.goto = (tab) => {
     const btn = document.getElementById("tab-" + tab + "-button");
     if (btn) btn.click();
+    // Bring the tab bar into view when it's scrolled away or far down (the header's buttons).
     const tabs = document.getElementById("bt-tabs");
-    if (tabs && tabs.getBoundingClientRect().top < 0) tabs.scrollIntoView({ behavior: "smooth", block: "start" });
+    const top = tabs ? tabs.getBoundingClientRect().top : 0;
+    if (tabs && (top < 0 || top > window.innerHeight * 0.6)) tabs.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   // A small confirm dialog placed next to the button that opened it, so it stays
@@ -463,14 +465,6 @@
     setTimeout(() => { if (document.activeElement === input && input.value) input.select(); }, 0);
   });
 })();
-
-// The header's "How to use" button opens the How to use tab.
-document.addEventListener("click", (e) => {
-  const go = e.target.closest("[data-bt-goto]");
-  if (!go) return;
-  const tab = document.getElementById(go.dataset.btGoto + "-button");
-  if (tab) { tab.click(); document.getElementById("bt-tabs").scrollIntoView({ behavior: "smooth", block: "start" }); }
-});
 
 // On phones the tab bar scrolls sideways: keep the open tab in view, and fade the
 // right edge only while more tabs are hidden there.

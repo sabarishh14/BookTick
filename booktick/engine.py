@@ -11,7 +11,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
-from . import district, seatmap
+from . import district, seatmap, tracker
 from .actions import new_token
 from .alerts import describe_results, send_seatmap, send_task_notification
 from .config import (CITY_LIST_MAX_AGE, FETCH_WORKERS, KEEP_FINISHED_DAYS, MAX_BACKOFF, MAX_BLOCK_BACKOFF,
@@ -287,7 +287,10 @@ def run_page(page, job):
             if kind == "city":
                 place = f"Cinemas in {district.city_label(job['city'])}"
             for task in job["tasks"]:
-                check_task(task, page, job["date"], place, shows)
+                if tracker.is_tracker(task):
+                    tracker.observe(task, place, [s for s in shows if wanted(task, s, job["date"])])
+                else:
+                    check_task(task, page, job["date"], place, shows)
         page_succeeded(page, kind, job)
     except Exception as e:
         page_failed(page, job, e)
@@ -341,8 +344,10 @@ def page_name(job):
 
 
 def housekeeping(today):
-    """Retire watchers whose dates have passed, and remove finished ones a week later."""
+    """Retire watchers whose dates have passed, send seat trackers' reports once their day is
+    over, and remove finished ones a week later."""
     cutoff = str(to_date(today) - timedelta(days=KEEP_FINISHED_DAYS))
+    reports = []
     with tasks_lock:
         changed = False
         for tid, task in list(state["tasks"].items()):
@@ -350,6 +355,9 @@ def housekeeping(today):
             if last < cutoff:
                 del state["tasks"][tid]
                 changed = True
+            elif tracker.is_tracker(task):
+                if tracker.due(task):
+                    reports.append(tid)
             elif last < today and task.get("status") in ("Active", "Paused"):
                 task["status"] = "Expired"
                 task["last_result"] = "Date passed"
@@ -358,6 +366,8 @@ def housekeeping(today):
                         owners_of(task))
         if changed:
             save_tasks()
+    for tid in reports:  # sending takes a few seconds, so not on the scheduler's thread
+        _pool.submit(tracker.finish, tid)
 
 
 def scheduler():

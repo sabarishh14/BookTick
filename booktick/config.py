@@ -33,10 +33,24 @@ MORE_SEATS_MIN = 10          # seats a show must gain before a "more seats" aler
 MORE_SEATS_GAP = 900         # at least this many seconds between "more seats" alerts for one watcher
 MAX_SEATMAPS = 8             # seat maps sent when bookings open: one per matching show, earliest first
 
+# --- Seat tracker ---------------------------------------------------------------
+TRACK_DAYS_AHEAD = 7         # how far ahead a tracker's day can be
+MAX_TRACKED_SHOWS = 12       # shows one tracker follows (earliest first)
+TRACK_SAVE_EVERY = 600       # seconds between saving a tracker's history to storage
+TRACK_MAP_GAP = 300          # least time between seat snapshots of one show in its last 3 hours…
+TRACK_MAP_GAP_FAR = 1200     # …and before that
+TRACK_MAP_SPACING = 30       # least time between any two tracker snapshots, across everyone
+RELEASE_MIN = 6              # seats that must come back in one go to count as released by the cinema
+BLOCK_MIN = 10               # seats gone in one go to count as held back by the cinema (or a big group)
+HOLD_WINDOW = 1200           # seats free again this soon after being taken were an unfinished booking
+REPORT_AFTER = 600           # the report goes out this long after the last tracked show starts
+
 # --- Limits (admins are exempt) -------------------------------------------------
 MAX_WATCHERS_PER_PERSON = 5   # open watchers (watching or paused) per browser
 MAX_WATCHERS_PER_NETWORK = 10  # per IP address, so new browsers don't get around the limit above
 MAX_WATCHERS_TOTAL = 500
+MAX_TRACKERS_PER_PERSON = 2   # seat trackers going at once per browser (each takes seat snapshots)
+MAX_TRACKERS_TOTAL = 30
 TEST_COOLDOWN = 60            # seconds between test alerts to the same ntfy topic / chat / webhook
 TEST_ALERTS_PER_MINUTE = 20   # across everyone
 PREVIEW_CACHE = 15            # seconds a preview reuses a page it just fetched

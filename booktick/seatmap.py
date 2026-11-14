@@ -3,10 +3,12 @@
 District's seat page draws its map from a request its own JavaScript makes, so the seats
 aren't in any page BookTick can fetch directly. A browser on the server opens the seat page
 as a guest (no login), takes the seat data from District's own request as it arrives, and
-draws BookTick's own picture of it. It runs only when bookings open or reopen, never on
-every check, and one browser is kept running so each snapshot costs only the page load.
+draws BookTick's own picture of it. It runs when bookings open or reopen, and for seat
+trackers when a show's seat count moves, never on every check. One browser is kept running
+so each snapshot costs only the page load, and alert snapshots always go first.
 """
 import html
+import itertools
 import os
 import queue
 import re
@@ -30,7 +32,8 @@ REUSE_FOR = 120            # watchers on the same show share one snapshot taken 
 
 _images = {}               # image id -> {"png", "expires", "show", "free", "total", "taken_at"}
 _images_lock = threading.Lock()
-_jobs = queue.Queue(maxsize=50)
+_jobs = queue.PriorityQueue(maxsize=80)  # (priority, order, job): alerts 0, seat trackers 5
+_order = itertools.count()
 _worker = None
 _worker_lock = threading.Lock()
 
@@ -212,18 +215,16 @@ def snapshot(browser, show, place):
 def work():
     browser = Browser()
     while True:
-        task, show, place, done = _jobs.get()
+        _, _, job = _jobs.get()
         try:
-            image_id = snapshot(browser, show, place)
-            done(task, show, place, image_id)
-        except Exception as e:
-            add_log(f"⚠️ [{task.get('user_label', 'Watcher')}] couldn't take the seat map: {shorten(e, 120)}",
-                    (task.get("owner"),))
-            browser.close()  # start a fresh browser next time
+            job(browser)
+        except Exception as e:  # a job reports its own errors; this only keeps the worker alive
+            print(f"Seat map job failed: {e}", flush=True)
+            browser.close()
 
 
-def request(task, show, place, done):
-    """Queue a snapshot; `done(task, show, place, image_id)` runs when it's ready. Never blocks."""
+def submit(priority, job):
+    """Queue `job(browser)` for the worker. Never blocks; False if it couldn't be queued."""
     global _worker
     if not enabled():
         return False
@@ -232,10 +233,44 @@ def request(task, show, place, done):
             _worker = threading.Thread(target=work, daemon=True, name="booktick-seatmap")
             _worker.start()
     try:
-        _jobs.put_nowait((task, show, place, done))
+        _jobs.put_nowait((priority, next(_order), job))
         return True
     except queue.Full:
         return False
+
+
+def request(task, show, place, done):
+    """Queue a snapshot; `done(task, show, place, image_id)` runs when it's ready. Never blocks."""
+    def job(browser):
+        try:
+            image_id = snapshot(browser, show, place)
+        except Exception as e:
+            add_log(f"⚠️ [{task.get('user_label', 'Watcher')}] couldn't take the seat map: {shorten(e, 120)}",
+                    (task.get("owner"),))
+            browser.close()  # start a fresh browser next time
+            return
+        done(task, show, place, image_id)
+    return submit(0, job)
+
+
+def request_layout(url, done):
+    """For the seat tracker: queue a read of one show's seats, after any alert snapshots.
+
+    `done(layout, error)` runs on the worker thread with District's seat data, or None and why not.
+    """
+    def job(browser):
+        try:
+            layout = browser.layout(url)
+        except Exception as e:
+            browser.close()
+            done(None, e)
+            return
+        done(layout, None)
+    return submit(5, job)
+
+
+def waiting():
+    return _jobs.qsize()
 
 
 def register(app):

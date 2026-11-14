@@ -217,6 +217,50 @@ def send_seatmap(task, show, place, png, free, total, image_link):
     return results
 
 
+def send_report(task, headline, lines, link):
+    """A seat tracker's end-of-day report: the main findings, and a link to the full report."""
+    results = []
+    topic = (task.get("ntfy_topic") or "").strip()
+    if topic:
+        payload = {"topic": topic, "title": headline, "priority": 3, "tags": ["bar_chart"],
+                   "message": "\n".join(f"• {line}" for line in lines) + ("\n\nTap for the full report." if link else "")}
+        if link:
+            payload["click"] = link
+        try:
+            res = requests.post("https://ntfy.sh", json=payload, timeout=10)
+            results.append(("ntfy", res.ok, "sent" if res.ok else response_error(res)))
+        except Exception as e:
+            results.append(("ntfy", False, str(e)))
+
+    tg_token = (task.get("telegram_token") or "").strip()
+    tg_chat = (task.get("telegram_chat_id") or "").strip()
+    if tg_token and tg_chat:
+        esc = html_lib.escape
+        text = "\n".join([f"<b>{esc(headline)}</b>", ""] + [f"• {esc(line)}" for line in lines]
+                         + (["", f'👉 <a href="{esc(link, quote=True)}"><b>Full report</b></a>'] if link else []))
+        try:
+            res = requests.post(f"https://api.telegram.org/bot{tg_token}/sendMessage", timeout=10,
+                                json={"chat_id": tg_chat, "text": text[:4000], "parse_mode": "HTML",
+                                      "disable_web_page_preview": True})
+            results.append(("Telegram", res.ok, "sent" if res.ok else response_error(res)))
+        except Exception as e:
+            results.append(("Telegram", False, redact(e, tg_token)))
+
+    discord_url = (task.get("discord_webhook") or "").strip()
+    if discord_url:
+        embed = {"title": headline[:256], "color": BRAND_DISCORD_COLOR, "footer": {"text": APP_NAME},
+                 "description": "\n".join(f"• {line}" for line in lines) + (f"\n\n[Full report]({link})" if link else "")}
+        if link:
+            embed["url"] = link
+        try:
+            res = requests.post(discord_url, json={"embeds": [embed]}, timeout=10)
+            ok = res.status_code in (200, 204)
+            results.append(("Discord", ok, "sent" if ok else response_error(res)))
+        except Exception as e:
+            results.append(("Discord", False, redact(e, discord_url, urlparse(discord_url).path)))
+    return results
+
+
 def describe_results(results):
     if not results:
         return "no alert channels set"

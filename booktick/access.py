@@ -13,8 +13,8 @@ import re
 import threading
 import time
 
-from .config import (ADMIN_KEY, MAX_WATCHERS_PER_NETWORK, MAX_WATCHERS_PER_PERSON, MAX_WATCHERS_TOTAL,
-                     TEST_ALERTS_PER_MINUTE, TEST_COOLDOWN)
+from .config import (ADMIN_KEY, MAX_TRACKERS_PER_PERSON, MAX_TRACKERS_TOTAL, MAX_WATCHERS_PER_NETWORK,
+                     MAX_WATCHERS_PER_PERSON, MAX_WATCHERS_TOTAL, TEST_ALERTS_PER_MINUTE, TEST_COOLDOWN)
 from .core import plural, state, tasks_lock
 
 OPEN_STATUSES = ("Active", "Paused")
@@ -61,10 +61,17 @@ def can_manage(session, task):
     return bool(session.get("admin") or (session.get("owner") and task.get("owner") == session["owner"]))
 
 
-def visible_tasks(session):
-    """(id, watcher copy) pairs this session may see: its own, or every watcher for an admin."""
+def kind_of(task):
+    return "tracker" if task.get("kind") == "tracker" else "watcher"
+
+
+def visible_tasks(session, kind="watcher"):
+    """(id, copy) pairs this session may see: its own, or every one for an admin.
+
+    `kind` is "watcher" or "tracker" (seat trackers live alongside watchers), or None for both.
+    """
     with tasks_lock:
-        items = [(tid, dict(t)) for tid, t in state["tasks"].items()]
+        items = [(tid, dict(t)) for tid, t in state["tasks"].items() if kind is None or kind_of(t) == kind]
     if session and session.get("admin"):
         return items
     owner = (session or {}).get("owner")
@@ -76,7 +83,8 @@ def watcher_limit_error(session, network):
     if session.get("admin"):
         return None
     with tasks_lock:
-        open_tasks = [t for t in state["tasks"].values() if t.get("status") in OPEN_STATUSES]
+        open_tasks = [t for t in state["tasks"].values()
+                      if t.get("status") in OPEN_STATUSES and kind_of(t) == "watcher"]
     if len(open_tasks) >= MAX_WATCHERS_TOTAL:
         return "BookTick is watching as much as it can right now. Try again once some watchers finish."
     mine = sum(1 for t in open_tasks if t.get("owner") == session.get("owner"))
@@ -85,6 +93,21 @@ def watcher_limit_error(session, network):
                 "Delete one you don't need, or wait for one to finish.")
     if network and sum(1 for t in open_tasks if t.get("network") == network) >= MAX_WATCHERS_PER_NETWORK:
         return "Too many watchers from your network right now. Delete one you don't need first."
+    return None
+
+
+def tracker_limit_error(session):
+    """Why this person can't add another seat tracker right now, or None."""
+    if session.get("admin"):
+        return None
+    with tasks_lock:
+        open_trackers = [t for t in state["tasks"].values()
+                         if t.get("status") in OPEN_STATUSES and kind_of(t) == "tracker"]
+    if len(open_trackers) >= MAX_TRACKERS_TOTAL:
+        return "BookTick is tracking as much as it can right now. Try again once some trackers finish."
+    if sum(1 for t in open_trackers if t.get("owner") == session.get("owner")) >= MAX_TRACKERS_PER_PERSON:
+        return (f"You can have {plural(MAX_TRACKERS_PER_PERSON, 'seat tracker')} going at once. "
+                "Delete one you don't need, or wait for one to send its report.")
     return None
 
 
