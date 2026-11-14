@@ -42,6 +42,29 @@ class CinemaPage(unittest.TestCase):
         self.assertEqual(starts, sorted(starts))
 
 
+class SameTimeTwoScreens(unittest.TestCase):
+    """Two screens showing the same movie at the same time must each keep their own seat link."""
+
+    def test_each_show_keeps_its_own_link(self):
+        sessions = [{"sid": sid, "cid": 1020779, "mid": "OBCQR6", "fid": "42vo6x7qxpo", "showTime": "2026-11-14T17:00",
+                     "total": 280, "avail": avail, "audi": audi, "scrnFmt": "2D"}
+                    for sid, avail, audi in (("69353", 43, "SCREEN 8"), ("69286", 64, "SCREEN 4"))]
+        data = {"props": {"pageProps": {"data": {"pageData": {"sessions": sessions},
+                                                 "groupedMovies": [{"id": "OBCQR6", "name": "Scene", "contentId": 233181}]}}}}
+        events = [{"@type": "ScreeningEvent", "name": "Scene (2D)", "startDate": "2026-11-14T22:30:00+05:30",
+                   "workPresented": {"name": "Scene"},
+                   "offers": {"url": f"https://www.district.in/movies/seat-layout/42vo6x7qxpo?encsessionid=1020779-{sid}-"
+                                     f"obcqr6-42vo6x7qxpo&fromdate=2026-11-14"}}
+                  for sid in ("69353", "69286")]
+        page = (f'<script id="__NEXT_DATA__" type="application/json">{json.dumps(data)}</script>'
+                + "".join(f'<script type="application/ld+json">{json.dumps(e)}</script>' for e in events))
+        _, shows = district.parse_cinema_page(page, "https://www.district.in/movies/inox-CD1020779")
+        links = {s["audi"]: s["url"] for s in shows}
+        self.assertEqual(len(shows), 2)
+        self.assertIn("-69353-", links["SCREEN 8"])
+        self.assertIn("-69286-", links["SCREEN 4"])
+
+
 class CityPage(unittest.TestCase):
     def setUp(self):
         self.directory = district.parse_city_page(fixture("city_page.html"))

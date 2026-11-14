@@ -241,7 +241,16 @@ def parse_cinema_page(page, url):
                 offers = offers[0] if offers else {}
             book_url = offers.get("url") or url
 
-            same = next((s for s in shows if s["title"].lower() == title.lower() and s["start"] == start), None)
+            # The same show from the session data: by its session id, or by movie and time when
+            # that's unambiguous. Two screens can show the same movie at the same time, and each
+            # must keep its own link.
+            sid = re.search(r"encsessionid=[^-&]+-([^-&]+)-", book_url)
+            same = next((s for s in shows if f"-{sid.group(1)}-" in s["url"]), None) if sid else None
+            if same is None:
+                alike = [s for s in shows if s["title"].lower() == title.lower() and s["start"] == start]
+                if len(alike) > 1:
+                    continue
+                same = alike[0] if alike else None
             if same:
                 same["url"] = book_url
                 continue

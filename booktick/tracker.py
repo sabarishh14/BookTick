@@ -78,6 +78,9 @@ TIMING = [(86400, "more than a day before"), (21600, "6–24 hours before"), (72
           (3600, "1–2 hours before"), (1800, "30–60 min before"), (0, "in the last 30 min before")]
 
 
+GAP = 180  # seconds without a check after which a change can't be pinned to one moment
+
+
 def timing_phrase(before):
     return next(phrase for floor, phrase in TIMING if before >= floor)
 
@@ -100,12 +103,14 @@ def track_of(task):
 
 
 def show_key(show):
-    """A show's seat link is unique to it; without one, its movie, time and format."""
+    """A show's seat link and screen (two screens can show a movie at the same time); without a
+    link, its movie, time, format and screen."""
     url = show.get("url") or ""
+    audi = show.get("audi") or ""
     if "/seat-layout/" in url:
-        return url
+        return f"{url}#{audi}"
     start = show["start"].isoformat() if show.get("start") else ""
-    return f"{show.get('title')}|{start}|{show.get('format')}"
+    return f"{show.get('title')}|{start}|{show.get('format')}|{audi}"
 
 
 def summary_text(track):
@@ -169,6 +174,12 @@ def observe(task, place, shows):
                 lines.append(f"🎟️ [{task.get('user_label', 'Tracker')}] {delta} seats came back in the "
                              f"{fmt_clock(s['start'])} {rec['format']} show at {shorten(place_of(task), 50)}, "
                              f"{duration(start - now)} before it starts.")
+            flip = None if rec.get("flip_seen") else flipping(counts)
+            if flip:
+                rec["flip_seen"] = True  # logged once per show; the report has the rest
+                lines.append(f"🔁 [{task.get('user_label', 'Tracker')}] seats keep flipping in the {fmt_clock(s['start'])} "
+                             f"{rec['format']} show at {shorten(place_of(task), 50)}: about {flip['size']} seats "
+                             f"blocked and released {flip['swings']} times so far.")
         for key, rec in track["shows"].items():
             if key not in listed and ts_of(rec["start"]) > now:
                 rec["gone"] = True  # taken off sale before it started
@@ -344,6 +355,29 @@ def zone_of(sids, geo):
     return ("row " if len(labels) == 1 else "rows ") + rows, zone
 
 
+def flipping(counts):
+    """Seats blocked and released again and again: big moves that keep changing direction.
+
+    Returns {"swings", "size", "from", "to", "low", "high"} when the count swung back and forth
+    at least three times, else None.
+    """
+    moves = [(t1, b - a) for (_, a), (t1, b) in zip(counts, counts[1:]) if abs(b - a) >= RELEASE_MIN]
+    turns = sum(1 for (_, x), (_, y) in zip(moves, moves[1:]) if (x > 0) != (y > 0))
+    if turns < 2:
+        return None
+    values = [v for _, v in counts]
+    return {"swings": len(moves), "size": Counter(abs(d) for _, d in moves).most_common(1)[0][0],
+            "from": moves[0][0], "to": moves[-1][0], "low": min(values), "high": max(values)}
+
+
+def flip_text(s):
+    f = s["flip"]
+    span = (f"at {clock_at(f['to'])}" if clock_at(f["from"]) == clock_at(f["to"])
+            else f"between {clock_at(f['from'])} and {clock_at(f['to'])}")
+    return (f"about {f['size']} seats were blocked and released {f['swings']} times {span} "
+            f"(seats left went between {f['low']} and {f['high']})")
+
+
 def show_report(key, rec, layouts):
     """What happened to one show's seats."""
     start = ts_of(rec["start"])
@@ -361,7 +395,11 @@ def show_report(key, rec, layouts):
     for (t0, a), (t1, b) in zip(counts, counts[1:]):
         d = b - a
         if d >= RELEASE_MIN:
-            event = {"ts": t1, "seats": d, "before": start - t1, "rows": "", "zone": ""}
+            # After a gap in checking (a restart, or District asking us to wait), all we know is
+            # that it happened somewhere in the gap.
+            gap = t1 - t0 > GAP
+            when = (t0 + t1) / 2 if gap else t1
+            event = {"ts": t1, "from": t0 if gap else None, "seats": d, "before": start - when, "rows": "", "zone": ""}
             # The first seat read after the release shows which seats came back.
             after = next((x for x in diffs if t1 <= x["ts"] <= t1 + TRACK_MAP_GAP_FAR + 300 and x["freed"]), None)
             if after:
@@ -371,8 +409,11 @@ def show_report(key, rec, layouts):
         elif d > 0:
             small_back += d
         elif -d >= BLOCK_MIN:
-            drops.append({"ts": t1, "seats": -d, "before": start - t1})
+            gap = t1 - t0 > GAP
+            drops.append({"ts": t1, "from": t0 if gap else None, "seats": -d,
+                          "before": start - ((t0 + t1) / 2 if gap else t1)})
     return {
+        "flip": flipping(counts),
         "key": key, "title": rec["title"], "format": rec["format"], "audi": rec["audi"], "start": rec["start"],
         "total": rec.get("total"), "first": counts[0][1] if counts else None, "last": counts[-1][1] if counts else None,
         "series": counts, "releases": releases, "drops": drops, "small_back": small_back, "held": held,
@@ -385,39 +426,55 @@ def show_name(s):
     return f"{fmt_clock(datetime.fromisoformat(s['start']))} {s['format']}".strip()
 
 
+def when_text(event):
+    """'at 6:31 PM', or 'between 9:10 AM and 9:40 AM' after a gap in checking."""
+    if event.get("from"):
+        return f"between {clock_at(event['from'])} and {clock_at(event['ts'])}"
+    return f"at {clock_at(event['ts'])}"
+
+
 def insights(shows, skipped=0):
     """The findings, most useful first, as plain sentences."""
     if not shows:
         return ["No matching shows were listed for this day, so there was nothing to track."]
     lines = []
+    flips = [s for s in shows if s.get("flip")]
+    if flips:
+        busiest = max(flips, key=lambda x: x["flip"]["swings"])
+        others = f" It happened in {plural(len(flips), 'show')} in all." if len(flips) > 1 else ""
+        lines.append(f"Seats kept flipping in the {show_name(busiest)} show: {flip_text(busiest)}.{others}")
     releases = [(s, r) for s in shows for r in s["releases"]]
     total = sum(r["seats"] for _, r in releases)
     if releases:
-        lines.append(f"{plural(len(releases), 'release')} across {plural(len({s['key'] for s, _ in releases}), 'show')}: "
-                     f"{plural(total, 'seat')} came back in one go.")
-        buckets = Counter()
-        for _, r in releases:
-            buckets[timing_phrase(r["before"])] += r["seats"]
-        phrase, seats = buckets.most_common(1)[0]
-        if len(releases) > 1 and seats < total:
-            lines.append(f"Most of them ({seats} of {total} seats) came back {phrase} showtime.")
-        else:
-            lines.append(f"They came back {phrase} showtime.")
         s, r = max(releases, key=lambda sr: sr[1]["seats"])
         where = f" ({r['rows']}, {r['zone']})" if r["rows"] else ""
-        lines.append(f"Biggest: {r['seats']} seats in the {show_name(s)} show at {clock_at(r['ts'])}, "
-                     f"{duration(r['before'])} before it started{where}.")
-        zones = Counter(r["zone"] for _, r in releases if r["zone"])
-        if zones and len(releases) > 1:
-            lines.append(f"Released seats were mostly in the {zones.most_common(1)[0][0]}.")
-        lines.append(f"Next time, look {phrase} showtime.")
+        biggest = (f"{r['seats']} seats in the {show_name(s)} show {when_text(r)}, "
+                   f"{duration(r['before'])} before showtime{where}")
+        if len(releases) == 1:
+            lines.append(f"1 release: {biggest}.")
+        else:
+            shows_hit = len({x["key"] for x, _ in releases})
+            lines.append(f"{plural(len(releases), 'release')} across {plural(shows_hit, 'show')}: "
+                         f"{plural(total, 'seat')} came back in one go.")
+            buckets = Counter()
+            for _, x in releases:
+                buckets[timing_phrase(x["before"])] += x["seats"]
+            phrase, seats = buckets.most_common(1)[0]
+            lines.append(f"Most of them ({seats} of {total} seats) came back {phrase} showtime." if seats < total
+                         else f"All of them came back {phrase} showtime.")
+            lines.append(f"Biggest: {biggest}.")
+            zones = Counter(x["zone"] for _, x in releases if x["zone"])
+            if zones:
+                lines.append(f"Released seats were mostly in the {zones.most_common(1)[0][0]}.")
+            if seats >= 0.6 * total:
+                lines.append(f"Next time, look {phrase} showtime.")
     else:
         lines.append("No seats came back in one go, so this cinema didn't seem to hold seats back for these shows.")
     drops = [(s, d) for s in shows for d in s["drops"]]
     if drops:
         s, d = max(drops, key=lambda sd: sd[1]["seats"])
-        lines.append(f"{plural(len(drops), 'big drop')}: up to {d['seats']} seats went at once (the {show_name(s)} show at "
-                     f"{clock_at(d['ts'])}), likely held back by the cinema or a large group booking.")
+        lines.append(f"{plural(len(drops), 'big drop')}: up to {d['seats']} seats went at once (the {show_name(s)} show "
+                     f"{when_text(d)}), likely held back by the cinema or a large group booking.")
     held = sum(s["held"] for s in shows)
     if held:
         lines.append(f"{plural(held, 'seat')} came back within {HOLD_WINDOW // 60} min of being taken: bookings "
@@ -513,7 +570,13 @@ def card_info(task_id):
         upcoming = sorted(ts_of(r["start"]) for r in track["shows"].values() if ts_of(r["start"]) > now)
         last = track.get("last_event")
         last_text = None
-        if last and last[2] in track["shows"]:
+        flips = [(rec, flipping(rec["counts"])) for rec in track["shows"].values() if rec.get("flip_seen")]
+        flips = [(rec, f) for rec, f in flips if f]
+        if flips:
+            rec, f = max(flips, key=lambda rf: rf[1]["swings"])
+            last_text = (f"Seats keep flipping in the {clock_at(ts_of(rec['start']))} {rec['format']} show: "
+                         f"about {f['size']} seats, {f['swings']} times")
+        elif last and last[2] in track["shows"]:
             rec = track["shows"][last[2]]
             last_text = (f"{last[1]} seats came back in the {clock_at(ts_of(rec['start']))} {rec['format']} show "
                          f"at {clock_at(last[0])}")
@@ -524,29 +587,37 @@ def card_info(task_id):
 # ---------------------------------------------------------------------------
 # The report page (/report/<token>)
 # ---------------------------------------------------------------------------
-def sparkline(s):
-    """Seats left over time, with releases (green) and big drops (amber) marked."""
+def sparkline(s, final=False):
+    """Seats left over time, from when tracking began to showtime (or now), with releases (green)
+    and big drops (amber) marked. Scaled to the counts' own range, so small swings show."""
     series = s["series"]
-    if len(series) < 2:
-        return '<p class="muted">Not enough changes to draw.</p>'
-    w, h, pad = 600, 120, 6
-    t0, t1 = series[0][0], max(series[-1][0], series[0][0] + 1)
-    top = max(max(v for _, v in series), s.get("total") or 0, 1)
+    if not series:
+        return ""
+    start = ts_of(s["start"])
+    t0 = series[0][0]
+    t1 = max(start if final else min(time.time(), start), series[-1][0], t0 + 60)
+    values = [v for _, v in series]
+    lo, hi = min(values), max(values)
+    if hi - lo < 10:
+        lo, hi = max(0, lo - 5), hi + 5
+    w, h, pad = 600, 120, 8
     x = lambda t: pad + (t - t0) / (t1 - t0) * (w - 2 * pad)  # noqa: E731
-    y = lambda v: h - pad - v / top * (h - 2 * pad)  # noqa: E731
+    y = lambda v: h - pad - (v - lo) / (hi - lo) * (h - 2 * pad)  # noqa: E731
     points, prev = [], None
     for t, v in series:
         if prev is not None:
             points.append(f"{x(t):.1f},{y(prev):.1f}")  # a step: the count holds until it changes
         points.append(f"{x(t):.1f},{y(v):.1f}")
         prev = v
-    marks = "".join(f'<circle cx="{x(r["ts"]):.1f}" cy="{y(next(v for t, v in series if t == r["ts"])):.1f}" r="5" class="rel"/>'
-                    for r in s["releases"])
-    marks += "".join(f'<circle cx="{x(d["ts"]):.1f}" cy="{y(next(v for t, v in series if t == d["ts"])):.1f}" r="5" class="drop"/>'
-                     for d in s["drops"])
-    return (f'<svg class="spark" viewBox="0 0 {w} {h}" preserveAspectRatio="none" role="img" '
-            f'aria-label="Seats left over time"><polyline points="{" ".join(points)}"/>{marks}</svg>'
-            f'<div class="axis"><span>{clock_at(t0)}</span><span>{clock_at(t1)}</span></div>')
+    points.append(f"{x(t1):.1f},{y(prev):.1f}")
+    at = dict((t, v) for t, v in series)
+    marks = "".join(f'<circle cx="{x(e["ts"]):.1f}" cy="{y(at[e["ts"]]):.1f}" r="5" class="{cls}"/>'
+                    for cls, events in (("rel", s["releases"]), ("drop", s["drops"])) for e in events if e["ts"] in at)
+    end = "showtime" if final or time.time() >= start else "now"
+    return (f'<div class="chart"><div class="yaxis"><span>{hi}</span><span>{lo}</span></div>'
+            f'<svg class="spark" viewBox="0 0 {w} {h}" preserveAspectRatio="none" role="img" '
+            f'aria-label="Seats left over time"><polyline points="{" ".join(points)}"/>{marks}</svg></div>'
+            f'<div class="axis"><span>{clock_at(t0)}</span><span>{clock_at(t1)} · {end}</span></div>')
 
 
 def seat_grid(s):
@@ -569,20 +640,33 @@ def seat_grid(s):
             '<div class="key"><i class="rel"></i>Came back<i class="blk"></i>Taken in one go<i class="seat"></i>Other seats</div>')
 
 
-def show_card(s):
+def screen_label(audi):
+    """District names screens 'SCREEN 4' or just '4'."""
+    audi = str(audi or "").strip()
+    if not audi:
+        return ""
+    return audi.title() if audi.lower().startswith(("screen", "audi")) else f"Screen {audi}"
+
+
+def eventful(s):
+    return bool(s["releases"] or s["drops"] or s["held"] or s["gone"] or s.get("flip"))
+
+
+def show_card(s, final):
     start = datetime.fromisoformat(s["start"])
-    meta = " · ".join(x for x in (s["format"], s["audi"] and f"Screen {s['audi']}") if x)
+    meta = " · ".join(x for x in (s["format"], screen_label(s["audi"])) if x)
+    started = final or time.time() >= start.timestamp()
     if s["first"] is not None and s["last"] is not None:
         total = f" of {s['total']}" if s.get("total") else ""
-        seats = f"{s['first']} seats left when tracking began → {s['last']}{total} at showtime"
+        seats = f"{s['first']} seats left when tracking began, {s['last']}{total} {'at showtime' if started else 'now'}"
     else:
         seats = "No seat counts recorded"
     events = []
     for r in s["releases"]:
         where = f" · {esc(r['rows'])}, {esc(r['zone'])}" if r["rows"] else ""
-        events.append(f'<li class="rel"><b>+{r["seats"]}</b> at {clock_at(r["ts"])}, {duration(r["before"])} before{where}</li>')
+        events.append(f'<li class="rel"><b>+{r["seats"]}</b> {when_text(r)}, {duration(r["before"])} before{where}</li>')
     for d in s["drops"]:
-        events.append(f'<li class="drop"><b>−{d["seats"]}</b> at {clock_at(d["ts"])}, {duration(d["before"])} before</li>')
+        events.append(f'<li class="drop"><b>−{d["seats"]}</b> {when_text(d)}, {duration(d["before"])} before</li>')
     extra = []
     if s["held"]:
         extra.append(f"{plural(s['held'], 'seat')} back from unfinished bookings")
@@ -590,16 +674,37 @@ def show_card(s):
         extra.append(f"{plural(s['small_back'], 'seat')} came back a few at a time")
     if s["gone"]:
         extra.append("taken off sale before it started")
+    events_html = f'<ul class="events">{"".join(events)}</ul>' if events else ""
+    extra_html = f'<p class="muted">{esc("; ".join(extra).capitalize())}.</p>' if extra else ""
     return f"""
 <section class="show">
   <h3>{fmt_clock(start)} · {esc(s['title'])}</h3>
   <p class="muted">{esc(meta)}</p>
   <p>{esc(seats)}</p>
-  {sparkline(s)}
-  {f'<ul class="events">{"".join(events)}</ul>' if events else ''}
-  {f'<p class="muted">{esc("; ".join(extra).capitalize())}.</p>' if extra else ''}
+  {f'<p class="flip">Seats kept flipping: {esc(flip_text(s))}.</p>' if s.get("flip") else ""}
+  {sparkline(s, final)}
+  {events_html}
+  {extra_html}
   {seat_grid(s)}
 </section>"""
+
+
+def shows_table(shows):
+    """Every tracked show in one table: seats left when tracking began and now, and how many came back."""
+    rows = []
+    for s in shows:
+        start = datetime.fromisoformat(s["start"])
+        meta = " · ".join(x for x in (s["format"], screen_label(s["audi"])) if x)
+        if s["first"] is None:
+            seats = "—"
+        else:
+            seats = f"{s['first']} → {s['last']}" + (f" <small>of {s['total']}</small>" if s.get("total") else "")
+        back = sum(r["seats"] for r in s["releases"])
+        back_html = f'<b class="up">+{back}</b>' if back else "—"
+        rows.append(f'<tr><td>{fmt_clock(start)}</td><td class="movie">{esc(s["title"])}<small>{esc(meta)}</small></td>'
+                    f"<td>{seats}</td><td>{back_html}</td></tr>")
+    return ('<section><h2>Every show</h2><div class="scroll"><table><thead><tr><th>Time</th><th>Movie</th>'
+            '<th>Seats left</th><th>Came back</th></tr></thead><tbody>' + "".join(rows) + "</tbody></table></div></section>")
 
 
 def report_page(task, report):
@@ -609,7 +714,10 @@ def report_page(task, report):
               else f"So far · updated {clock_at(report['at'])} · the final report comes after the last show starts")
     status += f" · {plural(len(report['shows']), 'show')}, {plural(report['maps'], 'seat snapshot')}"
     insight_items = "".join(f"<li>{esc(line)}</li>" for line in report["insights"])
-    cards = "".join(show_card(s) for s in report["shows"])
+    busy = [s for s in report["shows"] if eventful(s)]
+    cards = (f'<h2 class="group">Shows where seats moved</h2>{"".join(show_card(s, report["final"]) for s in busy)}'
+             if busy else "")
+    cards += shows_table(report["shows"]) if report["shows"] else ""
     body = f"""
 <header>
   <p class="eyebrow">{APP_NAME} seat report</p>
@@ -646,10 +754,13 @@ PAGE = """<!doctype html>
   section {{ margin: 0 0 12px; padding: 16px 18px; border-radius: 16px; background: var(--card); border: 1px solid var(--line); }}
   .insights ul {{ margin: 0; padding-left: 1.2em; }} .insights li {{ margin: 0 0 6px; }}
   .note {{ margin: 0 0 12px; font-size: .85rem; color: var(--muted); }}
-  .spark {{ display: block; width: 100%; height: 110px; margin: 6px 0 2px; }}
+  .chart {{ display: flex; gap: 6px; margin: 8px 0 2px; }}
+  .yaxis {{ display: flex; flex-direction: column; justify-content: space-between; font-size: .72rem; color: var(--muted);
+           text-align: right; min-width: 24px; }}
+  .spark {{ display: block; flex: 1; min-width: 0; height: 110px; }}
   .spark polyline {{ fill: none; stroke: var(--brand); stroke-width: 2; vector-effect: non-scaling-stroke; }}
   .spark .rel {{ fill: var(--ok); }} .spark .drop {{ fill: var(--warn); }}
-  .axis {{ display: flex; justify-content: space-between; font-size: .75rem; color: var(--muted); }}
+  .axis {{ display: flex; justify-content: space-between; font-size: .75rem; color: var(--muted); margin-left: 30px; }}
   .events {{ margin: 10px 0 6px; padding: 0; list-style: none; display: grid; gap: 6px; }}
   .events li {{ padding: 6px 10px; border-radius: 10px; font-size: .88rem; }}
   .events li.rel {{ background: var(--ok-bg); }} .events li.drop {{ background: var(--warn-bg); }}
@@ -663,6 +774,16 @@ PAGE = """<!doctype html>
             border: 1px solid var(--line); border-radius: 6px; }}
   .key {{ display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin-top: 8px; font-size: .78rem; color: var(--muted); }}
   .key i {{ display: inline-block; width: 10px; height: 10px; margin-right: 4px; vertical-align: -1px; }}
+  h2.group {{ margin: 18px 0 8px; }}
+  .scroll {{ overflow-x: auto; }}
+  table {{ width: 100%; border-collapse: collapse; font-size: .88rem; }}
+  th {{ text-align: left; font-size: .75rem; font-weight: 600; color: var(--muted); padding: 0 8px 6px 0; }}
+  td {{ padding: 7px 8px 7px 0; border-top: 1px solid var(--line); vertical-align: top; white-space: nowrap; }}
+  td.movie {{ white-space: normal; }}
+  td small {{ color: var(--muted); font-size: .76rem; }}
+  td.movie small {{ display: block; }}
+  b.up {{ color: var(--ok); }}
+  .flip {{ padding: 8px 10px; border-radius: 10px; background: var(--warn-bg); font-size: .9rem; }}
 </style></head>
 <body><main>{body}</main></body></html>"""
 

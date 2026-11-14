@@ -171,16 +171,45 @@ class Report(Base):
         return start.timestamp()
 
     def test_releases_timing_and_advice(self):
-        now = time.time()
-        start = self.track_with([[int(now - 600), 10], [int(now - 300), 50], [int(now - 200), 48]], start_in=2400)
+        now = int(time.time())
+        start = self.track_with([[now - 1000, 10], [now - 985, 50], [now - 600, 48], [now - 585, 60]], start_in=2400)
         report = tracker.build_report(self.task)
         s = report["shows"][0]
-        self.assertEqual([r["seats"] for r in s["releases"]], [40])
-        self.assertAlmostEqual(s["releases"][0]["before"], start - int(now - 300), delta=1)
+        self.assertEqual([r["seats"] for r in s["releases"]], [40, 12])
+        self.assertAlmostEqual(s["releases"][0]["before"], start - (now - 985), delta=1)
         text = " ".join(report["insights"])
-        self.assertIn("40 seats came back in one go", text)
-        self.assertIn("30–60 min before showtime", text)
+        self.assertIn("2 releases across 1 show: 52 seats came back in one go", text)
+        self.assertIn("All of them came back 30–60 min before showtime", text)
         self.assertIn("Next time, look 30–60 min before showtime", text)
+
+    def test_seats_flipping_back_and_forth_come_first(self):
+        now = int(time.time())
+        self.track_with([[now - 100, 43], [now - 85, 64], [now - 70, 43], [now - 55, 64], [now - 40, 43]])
+        report = tracker.build_report(self.task)
+        flip = report["shows"][0]["flip"]
+        self.assertEqual((flip["swings"], flip["size"], flip["low"], flip["high"]), (4, 21, 43, 64))
+        self.assertTrue(report["insights"][0].startswith("Seats kept flipping in the "))
+        self.assertIn("about 21 seats were blocked and released 4 times", report["insights"][0])
+        self.assertIn("Seats kept flipping", tracker.report_page(self.task, report))
+
+    def test_one_way_moves_are_not_flipping(self):
+        now = int(time.time())
+        self.track_with([[now - 100, 10], [now - 85, 40], [now - 70, 70]])
+        self.assertIsNone(tracker.build_report(self.task)["shows"][0]["flip"])
+
+    def test_one_release_is_reported_without_a_pattern(self):
+        now = int(time.time())
+        self.track_with([[now - 1000, 10], [now - 985, 50]], start_in=2400)
+        lines = tracker.build_report(self.task)["insights"]
+        self.assertTrue(lines[0].startswith("1 release: 40 seats in the "))
+        self.assertNotIn("Next time", " ".join(lines))
+
+    def test_a_change_across_a_gap_in_checking_is_not_pinned_to_a_moment(self):
+        now = int(time.time())
+        self.track_with([[now - 4000, 10], [now - 400, 50]])  # the Space was asleep in between
+        report = tracker.build_report(self.task)
+        self.assertIn("between", report["insights"][0])
+        self.assertIn("between", tracker.report_page(self.task, report))
 
     def test_big_drops_and_small_returns(self):
         now = int(time.time())
