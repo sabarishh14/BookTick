@@ -1,6 +1,7 @@
 """HTML for the page. Anything a visitor typed (names, movies, links) is escaped here."""
 import html as html_lib
 import re
+from collections import Counter
 
 from . import access, district, engine, seatmap, tracker
 from .config import (ADMIN_KEY, APP_NAME, APP_TAGLINE, AUTHOR_NAME, DATABASE_URL, GITHUB_AVATAR, GITHUB_URL,
@@ -311,17 +312,20 @@ def channel_chips(task, detailed=False):
     """The watcher's alert channels. Its owner and admins also see where each one goes: the ntfy
     topic and Telegram chat in full, but only the end of a Discord webhook and never a bot token,
     since those would let anyone send messages through them."""
+    chips = channel_chip_list(task, detailed)
+    return "".join(chips) if chips else '<span class="bt-chan none">No alert channel</span>'
+
+
+def channel_chip_list(task, detailed=False):
     names = channel_names(task)
-    if not names:
-        return '<span class="bt-chan none">No alert channel</span>'
     if not detailed:
-        return "".join(f'<span class="bt-chan">{n}</span>' for n in names)
+        return [f'<span class="bt-chan">{n}</span>' for n in names]
     where = {
         "ntfy": task.get("ntfy_topic") or "",
         "Telegram": f"chat {task.get('telegram_chat_id') or ''}",
         "Discord": f"webhook …{str(task.get('discord_webhook') or '')[-4:]}",
     }
-    return "".join(f'<span class="bt-chan">{n} · <code>{esc(where[n])}</code></span>' for n in names)
+    return [f'<span class="bt-chan">{n} · <code>{esc(where[n])}</code></span>' for n in names]
 
 
 def slots_label(slots):
@@ -549,7 +553,12 @@ def watchers_html(session):
     elif engine.health()["blocked_for"]:
         banner = callout("warn", "District asked us to slow down",
                          "Checks resume in a few minutes. Your watchers are safe and will pick up where they left off.")
-    cards = "".join(watcher_card(tid, t, session) for tid, t in sorted(items, key=lambda i: i[1].get("created_ts", 0), reverse=True))
+    if session.get("admin"):
+        body = people_html(items, session)
+    else:
+        cards = "".join(watcher_card(tid, t, session)
+                        for tid, t in sorted(items, key=lambda i: i[1].get("created_ts", 0), reverse=True))
+        body = f'<div class="bt-grid">{cards}</div>'
     empties = "".join(f'<div class="bt-filter-empty" data-for="{k}">{text}</div>'
                       for k, text in EMPTY_FILTER_TEXT.items() if counts[k] == 0)
     return f"""
@@ -562,9 +571,69 @@ def watchers_html(session):
     </div>
   </div>
   {banner}
-  <div class="bt-grid">{cards}</div>
+  {body}
   {empties}
 </div>"""
+
+
+# --- The admin's view: everyone's watchers, one compact group per person --------
+def initials(name):
+    words = [w for w in str(name).split() if w and not w.isdigit()]
+    return "".join(w[0] for w in words[:2]).upper() or "?"
+
+
+def watcher_row(task_id, t, session):
+    """One line per watcher; tapping it opens the full card underneath."""
+    status = t.get("status", "")
+    label, tone, group = STATUS_META.get(status, (status or "Unknown", "paused", "finished"))
+    if status == "Done" and t.get("booked"):
+        label = "Booked"
+    if t.get("scope") == "city":
+        where = f"Any cinema in {district.city_label(t.get('city'))}"
+    else:
+        where = t.get("cinema_name") or district.cinema_name_from_url(t.get("cinema_url", ""))
+    fmt = str(t.get("format_filter") or "ANY")
+    sub = " · ".join(x for x in ("Any format" if fmt == "ANY" else fmt, task_dates_label(t), shorten(where, 46)) if x)
+    sent = to_int(t.get("alert_count")) or 0
+    return f"""
+<details class="bt-wrow" data-group="{group}">
+  <summary>
+    <span class="bt-badge s-{tone}">{label}</span>
+    <span class="bt-wrow-main"><b>{esc(watcher_title(t))}</b><small>{esc(sub)}</small></span>
+    <span class="bt-wrow-meta" title="Alerts sent">{icon("bell")}{sent}</span>
+    {icon("chevron-down", "bt-wrow-chev")}
+  </summary>
+  {watcher_card(task_id, t, session)}
+</details>"""
+
+
+def people_html(items, session):
+    """Everyone's watchers grouped by the browser that made them: you first, then the most recent."""
+    people = {}
+    for tid, t in items:
+        people.setdefault(t.get("owner") or "?", []).append((tid, t))
+    me = session.get("owner")
+    order = sorted(people.items(), key=lambda kv: (kv[0] != me, -max(t.get("created_ts", 0) for _, t in kv[1])))
+    out = []
+    for owner, rows in order:
+        rows.sort(key=lambda r: r[1].get("created_ts", 0), reverse=True)
+        name = Counter(t.get("user_label") or "Someone" for _, t in rows).most_common(1)[0][0]
+        watching = sum(1 for _, t in rows if t.get("status") == "Active")
+        alerts = sum(to_int(t.get("alert_count")) or 0 for _, t in rows)
+        chips = "".join(dict.fromkeys(c for _, t in rows for c in channel_chip_list(t, detailed=True)))
+        groups = " ".join(sorted({STATUS_META.get(t.get("status"), ("", "", "finished"))[2] for _, t in rows}))
+        you = '<span class="bt-you">You</span>' if owner == me else ""
+        out.append(f"""
+<section class="bt-person" data-groups="{groups}">
+  <header class="bt-person-head">
+    <span class="bt-avatar">{esc(initials(name))}</span>
+    <div class="bt-person-name"><b>{esc(name)}{you}</b>
+      <small>{plural(len(rows), "watcher")} · {watching} watching · {plural(alerts, "alert")} sent</small></div>
+    <div class="bt-chans">{chips or '<span class="bt-chan none">No alert channel</span>'}</div>
+  </header>
+  <div class="bt-wrows">{"".join(watcher_row(tid, t, session) for tid, t in rows)}</div>
+</section>""")
+    return '<div class="bt-people">' + "".join(out) + "</div>"
 
 
 # --- Activity log -------------------------------------------------------------

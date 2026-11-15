@@ -140,6 +140,39 @@ class Seats(Base):
         last = self.task["track"]["shows"][key]["diffs"][-1]
         self.assertEqual(sorted(last["held"]), sorted(free_now))
 
+    def test_a_block_released_soon_after_is_still_a_release(self):
+        s = show(120)
+        self.at(0, [s])
+        key = tracker.show_key(s)
+        free_now = [sid for _, _, sid, free in tracker.seat_list(tracker.seatmap.seat_rows(LAYOUT)) if free]
+        t0 = time.time()
+        with mock.patch("booktick.tracker.time.time", return_value=t0):
+            tracker.took_map("t1", key, LAYOUT, None)
+        with mock.patch("booktick.tracker.time.time", return_value=t0 + 300):
+            tracker.took_map("t1", key, self.seats_with(taken=free_now[:4] + free_now[10:22]), None)  # 4 + a block of 12
+        with mock.patch("booktick.tracker.time.time", return_value=t0 + 600):
+            tracker.took_map("t1", key, LAYOUT, None)  # all of them back within minutes
+        last = self.task["track"]["shows"][key]["diffs"][-1]
+        self.assertEqual(last["held"], [])  # the block made it more than one booking's worth: the cinema
+        report = tracker.build_report(self.task)["shows"][0]
+        self.assertEqual(len(report["released_ids"]), 16)
+        self.assertTrue(set(free_now[10:22]) <= set(report["blocked_ids"]))
+
+    def test_a_jump_in_seats_gets_a_seat_read_right_away(self):
+        tracker.seatmap.enabled.return_value = True
+        a, b = show(60, n=1, avail=10), show(30, n=2)
+        with mock.patch("booktick.tracker.seatmap.request_layout", return_value=True) as req, \
+                mock.patch("booktick.tracker.seatmap.waiting", return_value=0):
+            self.at(0, [a, b])                                   # first read: b, the sooner show
+            for key in list(tracker._pending):
+                tracker.took_map(key[0], key[1], LAYOUT, None)
+            tracker._pending.clear()
+            self.at(40, [dict(a, avail=10 + RELEASE_MIN + 5), b])  # a release in a
+        self.assertEqual(req.call_args.args[0], a["url"])        # read straight away, ahead of the rest
+
+    def test_seats_as_runs(self):
+        self.assertEqual(tracker.seats_text(["J5", "J6", "J7", "K3", "L1", "L2"]), "J5–7, K3, L1–2")
+
     def test_a_failed_read_is_noted_once_and_retried_later(self):
         s = show(120)
         self.at(0, [s])
@@ -222,7 +255,8 @@ class Report(Base):
     def test_nothing_unusual(self):
         now = int(time.time())
         self.track_with([[now - 900, 100], [now - 800, 98]])
-        self.assertIn("didn't seem to hold seats back", tracker.build_report(self.task)["insights"][0])
+        self.assertEqual(tracker.build_report(self.task)["insights"][0], "No seats have come back in one go yet.")
+        self.assertIn("didn't seem to hold seats back", tracker.build_report(self.task, final=True)["insights"][0])
 
     def test_no_shows(self):
         self.assertIn("No matching shows", tracker.insights([])[0])

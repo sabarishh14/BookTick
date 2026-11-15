@@ -43,6 +43,7 @@ TRACK_MAP_SPACING = 30       # least time between any two tracker snapshots, acr
 RELEASE_MIN = 6              # seats that must come back in one go to count as released by the cinema
 BLOCK_MIN = 10               # seats gone in one go to count as held back by the cinema (or a big group)
 HOLD_WINDOW = 1200           # seats free again this soon after being taken were an unfinished booking
+HOLD_MAX = 10                # …but only up to one booking's worth of seats at once
 REPORT_AFTER = 600           # the report goes out this long after the last tracked show starts
 
 # --- Limits (admins are exempt) -------------------------------------------------

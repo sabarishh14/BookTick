@@ -68,7 +68,11 @@
   const morph = (a, b) => {
     if (a.nodeType !== b.nodeType || a.nodeName !== b.nodeName) { a.replaceWith(b.cloneNode(true)); return; }
     if (a.nodeType !== 1) { if (a.nodeValue !== b.nodeValue) a.nodeValue = b.nodeValue; return; }
-    for (const at of Array.from(a.attributes)) if (!b.hasAttribute(at.name)) a.removeAttribute(at.name);
+    // A row someone opened (a <details>) stays open when fresh HTML arrives.
+    const keepOpen = a.nodeName === "DETAILS";
+    for (const at of Array.from(a.attributes)) {
+      if (!b.hasAttribute(at.name) && !(keepOpen && at.name === "open")) a.removeAttribute(at.name);
+    }
     for (const at of Array.from(b.attributes)) if (a.getAttribute(at.name) !== at.value) a.setAttribute(at.name, at.value);
     morphChildren(a, b);
   };

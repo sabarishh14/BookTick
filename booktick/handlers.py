@@ -14,6 +14,7 @@ import gradio as gr
 
 from . import access, district, engine, tracker
 from .actions import new_token
+from .names import name_for
 from .alerts import describe_results, sample_shows, send_task_notification
 from .config import (DEFAULT_CITY, DEFAULT_URL, MAX_INTERVAL, MAX_RANGE_DAYS, MAX_TRACKED_SHOWS, MIN_INTERVAL,
                      PREVIEW_CACHE, TIME_SLOTS, TRACK_DAYS_AHEAD)
@@ -108,9 +109,10 @@ def on_page_load(identity):
     if not session["owner"]:  # the page script didn't run: watchers last for this tab only
         session["owner"] = access.digest(uuid.uuid4().hex, "owner")
     forget_admin = "-" if session.pop("admin_rejected", False) else keep()
+    name = name_for(session["owner"])  # this browser's own name, for both forms
     return ((session, forget_admin, today_ist(), gr.update(value=state["interval_sec"]),
              engine_note_html(session), engine_button(), admin_status_html(session))
-            + admin_controls(session) + live_views(session, force=True))
+            + admin_controls(session) + live_views(session, force=True) + (name, name))
 
 
 def admin_login(key, session):
@@ -366,7 +368,7 @@ def add_new_watcher(session, user_name, cinema_value, cin_url, movie_names, fmt_
         return fail("Can't add another watcher yet", esc(limit))
 
     task_id = "w_" + uuid.uuid4().hex[:10]
-    name = shorten((user_name or "").strip() or "Me", 40)
+    name = shorten((user_name or "").strip() or name_for(session["owner"]), 40)
     cinema_name = (district.known_cinema_name(where) or district.cinema_name_from_url(where)) if scope == "cinema" else None
     task = dict(
         channels,
@@ -658,7 +660,7 @@ def add_tracker(session, user_name, cinema_value, day, fmt_val, movie, ntfy_top,
         return fail("Nothing left to track that day", esc(problem))
 
     task_id = "t_" + uuid.uuid4().hex[:10]
-    name = shorten((user_name or "").strip() or "Me", 40)
+    name = shorten((user_name or "").strip() or name_for(session["owner"]), 40)
     task = dict(
         channels, **filters,
         id=task_id, kind="tracker", owner=session["owner"], network=access.network_id(request), user_label=name,

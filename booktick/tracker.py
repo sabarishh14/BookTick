@@ -13,6 +13,7 @@ channels, and the full report stays at /report/<token>.
 """
 import copy
 import html
+import re
 import secrets
 import threading
 import time
@@ -21,7 +22,7 @@ from datetime import datetime
 
 from . import seatmap
 from .alerts import describe_results, send_report
-from .config import (APP_NAME, BLOCK_MIN, HOLD_WINDOW, MAX_TRACKED_SHOWS, PUBLIC_URL, RELEASE_MIN, REPORT_AFTER,
+from .config import (APP_NAME, BLOCK_MIN, HOLD_MAX, HOLD_WINDOW, MAX_TRACKED_SHOWS, PUBLIC_URL, RELEASE_MIN, REPORT_AFTER,
                      TRACK_MAP_GAP, TRACK_MAP_GAP_FAR, TRACK_MAP_SPACING, TRACK_SAVE_EVERY)
 from .core import (IST, add_log, date_label, fmt_clock, now_ist, plural, shorten, state, tasks_lock, today_ist)
 from .storage import save_tasks
@@ -167,6 +168,8 @@ def observe(task, place, shows):
             counts.append([int(now), s["avail"]])
             if len(counts) > 1:
                 rec["dirty"] = True  # read its seats soon, to see which ones changed
+            if delta >= RELEASE_MIN or -delta >= BLOCK_MIN:
+                rec["urgent"] = True  # …and right away after a big move, before the seats are booked again
             if delta >= RELEASE_MIN:
                 track["releases"] += 1
                 track["released"] += delta
@@ -219,18 +222,19 @@ def next_map(task, track, now):
     due = []
     for key, rec in track["shows"].items():
         start = ts_of(rec["start"])
-        if (now >= start or rec["gone"] or "/seat-layout/" not in (rec.get("url") or "")
-                or (task["id"], key) in _pending or now - rec["map_ts"] < map_gap(start, now)
-                or (rec["seats"] is not None and not rec["dirty"])):
+        if now >= start or rec["gone"] or "/seat-layout/" not in (rec.get("url") or "") or (task["id"], key) in _pending:
             continue
-        due.append((start, key, rec["url"]))
+        urgent = rec.get("urgent") and now - rec["map_ts"] >= TRACK_MAP_SPACING
+        if not urgent and (now - rec["map_ts"] < map_gap(start, now) or (rec["seats"] is not None and not rec["dirty"])):
+            continue
+        due.append((0 if urgent else 1, start, key, rec["url"]))
     if not due:
         return None
     with _gate_lock:
         if now < _gate["next"] or seatmap.waiting() > 10:
             return None
         _gate["next"] = now + TRACK_MAP_SPACING
-    _, key, url = min(due)  # the show starting soonest first
+    _, _, key, url = min(due)  # right after a big move first, then the show starting soonest
     _pending.add((task["id"], key))
     return key, url
 
@@ -295,6 +299,7 @@ def took_map(tid, key, layout, error):
         if not rec:
             return
         rec["map_ts"] = now
+        rec["urgent"] = False
         if not sections:
             rec["map_fails"] = rec.get("map_fails", 0) + 1
             if rec["map_fails"] == 1:
@@ -310,13 +315,21 @@ def took_map(tid, key, layout, error):
             rec["layout"] = layout_key
             taken = {sid for _, _, sid, free in seat_list(sections) if not free}
             before = rec["seats"]
+            rec["seen_ts"] = now
             if before is None:
                 rec["seats"] = {sid: 0 for sid in taken}  # 0: already taken when tracking began
             else:
                 freed = sorted(set(before) - taken)
                 added = sorted(taken - set(before))
+                big = set(rec.get("big") or [])
+                if len(added) >= BLOCK_MIN:
+                    big |= set(added)  # many seats at once: the cinema holding them back
+                    rec["big"] = sorted(big)
                 if freed or added:
-                    held = [sid for sid in freed if before[sid] and now - before[sid] <= HOLD_WINDOW]
+                    # Seats back soon after being taken were someone's unfinished booking, but only a
+                    # booking's worth, and never seats the cinema took in one go.
+                    recent = [sid for sid in freed if before[sid] and now - before[sid] <= HOLD_WINDOW and sid not in big]
+                    held = recent if len(recent) <= HOLD_MAX else []
                     rec["diffs"].append({"ts": now, "freed": freed, "taken": added, "held": held})
                 rec["seats"] = {sid: before.get(sid, now) for sid in taken}
         owner = task.get("owner")
@@ -405,6 +418,7 @@ def show_report(key, rec, layouts):
             if after:
                 freed = [s for s in after["freed"] if s not in set(after.get("held") or [])]
                 event["rows"], event["zone"] = zone_of(freed, geo)
+                event["seat_ids"] = freed
             releases.append(event)
         elif d > 0:
             small_back += d
@@ -419,7 +433,33 @@ def show_report(key, rec, layouts):
         "series": counts, "releases": releases, "drops": drops, "small_back": small_back, "held": held,
         "gone": rec.get("gone", False), "maps": len(diffs) + (1 if rec.get("seats") is not None else 0),
         "released_ids": sorted(set(released_ids)), "blocked_ids": sorted(set(blocked_ids)), "layout": geo,
+        "taken_ids": sorted(rec["seats"]) if rec.get("seats") is not None else None, "seen_ts": rec.get("seen_ts"),
     }
+
+
+def seats_text(ids, limit=10):
+    """'J5–12, K3–10, L1': seat ids as runs per row."""
+    rows, other = {}, []
+    for sid in ids:
+        m = re.fullmatch(r"([A-Za-z]+)(\d+)", sid)
+        if m:
+            rows.setdefault(m.group(1), []).append(int(m.group(2)))
+        else:
+            other.append(sid)
+    runs = []
+    for row in sorted(rows, key=lambda r: (len(r), r)):
+        nums = sorted(set(rows[row]))
+        first = prev = nums[0]
+        for n in nums[1:] + [None]:
+            if n is not None and n == prev + 1:
+                prev = n
+                continue
+            runs.append(f"{row}{first}" + (f"–{prev}" if prev != first else ""))
+            if n is not None:
+                first = prev = n
+    runs += other
+    more = len(runs) - limit
+    return ", ".join(runs[:limit]) + (f" and {plural(more, 'more group')}" if more > 0 else "")
 
 
 def show_name(s):
@@ -433,7 +473,7 @@ def when_text(event):
     return f"at {clock_at(event['ts'])}"
 
 
-def insights(shows, skipped=0):
+def insights(shows, skipped=0, final=True):
     """The findings, most useful first, as plain sentences."""
     if not shows:
         return ["No matching shows were listed for this day, so there was nothing to track."]
@@ -469,7 +509,8 @@ def insights(shows, skipped=0):
             if seats >= 0.6 * total:
                 lines.append(f"Next time, look {phrase} showtime.")
     else:
-        lines.append("No seats came back in one go, so this cinema didn't seem to hold seats back for these shows.")
+        lines.append("No seats came back in one go, so this cinema didn't seem to hold seats back for these shows."
+                     if final else "No seats have come back in one go yet.")
     drops = [(s, d) for s in shows for d in s["drops"]]
     if drops:
         s, d = max(drops, key=lambda sd: sd[1]["seats"])
@@ -492,7 +533,7 @@ def build_report(task, final=False):
     track = track_of(task)
     shows = sorted((show_report(k, r, track["layouts"]) for k, r in track["shows"].items()), key=lambda s: s["start"])
     return {"final": final, "at": int(time.time()), "shows": shows, "skipped": len(track["skipped"]),
-            "maps": track["maps"], "insights": insights(shows, len(track["skipped"]))}
+            "maps": track["maps"], "insights": insights(shows, len(track["skipped"]), final)}
 
 
 def report_for(token):
@@ -621,23 +662,34 @@ def sparkline(s, final=False):
 
 
 def seat_grid(s):
-    """The show's seats: released ones green, held-back ones amber."""
+    """The hall as BookTick last saw it, with every seat that came back today in green and seats
+    taken in one go in amber."""
     geo = s.get("layout")
     released, blocked = set(s["released_ids"]), set(s["blocked_ids"])
-    if not geo or not (released or blocked):
+    taken = set(s["taken_ids"] or [])
+    if not geo:
         return ""
     rows = []
     for label, seats in geo["rows"]:
         cells = ["<i></i>"] * geo["width"]
         for col, sid in seats:
             if 1 <= col <= geo["width"]:
-                cls = "rel" if sid in released else "blk" if sid in blocked else "seat"
+                cls = ("rel" if sid in released else "blk" if sid in blocked
+                       else "taken" if sid in taken else "free")
                 cells[col - 1] = f'<i class="{cls}" title="{esc(sid)}"></i>'
         rows.append(f'<div class="srow"><b>{esc(label)}</b>{"".join(cells)}</div>')
     screen = '<div class="screen">SCREEN</div>'
     body = (screen + "".join(rows)) if geo["front_first"] else ("".join(rows) + screen)
-    return (f'<div class="grid" style="--cols:{geo["width"]}">{body}</div>'
-            '<div class="key"><i class="rel"></i>Came back<i class="blk"></i>Taken in one go<i class="seat"></i>Other seats</div>')
+    when = f" at {clock_at(s['seen_ts'])}" if s.get("seen_ts") else ""
+    key = (f'<div class="key"><span><i class="rel"></i>Came back today ({len(released)})</span>'
+           + (f'<span><i class="blk"></i>Taken in one go ({len(blocked)})</span>' if blocked else "")
+           + '<span><i class="free"></i>Free</span><span><i class="taken"></i>Taken</span></div>')
+    counted = sum(r["seats"] for r in s["releases"])
+    gap = ("<p class=\"muted small\">The counts said more seats came back than the seat map shows: BookTick looks at the "
+           "seat map just after a count jumps, and seats booked again in between can't be seen.</p>"
+           if counted > len(released) else "")
+    return (f'<p class="maphead">Seat map{esc(when)}</p><div class="grid" style="--cols:{geo["width"]}">{body}</div>'
+            f"{key}{gap}")
 
 
 def screen_label(audi):
@@ -664,7 +716,11 @@ def show_card(s, final):
     events = []
     for r in s["releases"]:
         where = f" · {esc(r['rows'])}, {esc(r['zone'])}" if r["rows"] else ""
-        events.append(f'<li class="rel"><b>+{r["seats"]}</b> {when_text(r)}, {duration(r["before"])} before{where}</li>')
+        ids = r.get("seat_ids") or []
+        seen = (f"<small>Seats {esc(seats_text(ids))}"
+                + (f" ({len(ids)} of the {r['seats']} seen on the seat map)" if len(ids) < r["seats"] else "")
+                + "</small>") if ids else "<small>Not caught on the seat map</small>"
+        events.append(f'<li class="rel"><b>+{r["seats"]}</b> {when_text(r)}, {duration(r["before"])} before{where}{seen}</li>')
     for d in s["drops"]:
         events.append(f'<li class="drop"><b>−{d["seats"]}</b> {when_text(d)}, {duration(d["before"])} before</li>')
     extra = []
@@ -769,10 +825,14 @@ PAGE = """<!doctype html>
   .srow {{ display: grid; grid-template-columns: 18px repeat(var(--cols), minmax(5px, 9px)); gap: 2px; margin-bottom: 2px; }}
   .srow b {{ font-size: 9px; line-height: 9px; color: var(--muted); }}
   .grid i, .key i {{ display: block; height: 9px; border-radius: 2px; }}
-  i.seat {{ background: var(--seat); }} i.rel {{ background: var(--ok); }} i.blk {{ background: var(--warn); }}
+  i.taken {{ background: var(--seat); }} i.free {{ box-shadow: inset 0 0 0 1px var(--muted); opacity: .55; }}
+  i.rel {{ background: var(--ok); }} i.blk {{ background: var(--warn); }}
+  .events small {{ display: block; margin-top: 2px; color: var(--muted); font-size: .8rem; }}
+  .maphead {{ margin: 14px 0 0; font-weight: 600; font-size: .9rem; }} .small {{ font-size: .8rem; margin-top: 6px; }}
   .screen {{ margin: 6px 0 6px 20px; padding: 2px 0; text-align: center; font-size: 10px; letter-spacing: .3em; color: var(--muted);
             border: 1px solid var(--line); border-radius: 6px; }}
-  .key {{ display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin-top: 8px; font-size: .78rem; color: var(--muted); }}
+  .key {{ display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; font-size: .78rem; color: var(--muted); }}
+  .key span {{ white-space: nowrap; }}
   .key i {{ display: inline-block; width: 10px; height: 10px; margin-right: 4px; vertical-align: -1px; }}
   h2.group {{ margin: 18px 0 8px; }}
   .scroll {{ overflow-x: auto; }}

@@ -1,7 +1,8 @@
 """BookTick: phone alerts the moment movie tickets open on District.
 
 This file lays out the page and wires its events. The work happens in booktick/:
-district.py reads District, engine.py checks watchers, alerts.py sends alerts,
+district.py reads District, engine.py checks watchers, tracker.py runs the seat trackers and
+their reports, alerts.py sends alerts,
 storage.py saves them, access.py decides who can see and change what, views.py and
 handlers.py build the page, and static/ holds its CSS and JS.
 """
@@ -115,7 +116,7 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
                     with gr.Column(elem_classes="bt-step"):
                         gr.HTML(step_head("2", "Where should we alert you?", "Fill in one or more. ntfy is the quickest to set up."))
                         user_name_input = gr.Textbox(
-                            label="Your name", value="Me", placeholder="e.g. Arun", max_lines=1,
+                            label="Your name", value="", placeholder="e.g. Arun", max_lines=1,
                             info="Shown on the watcher card so you can spot yours.",
                         )
                         with gr.Tabs(elem_id="bt-channel-tabs"):
@@ -178,7 +179,7 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
                                                info="Every movie at the cinema, or just one.")
                     with gr.Column(elem_classes="bt-step"):
                         gr.HTML(step_head(icon("bell"), "Where should the report go?", "Fill in one or more, like for alerts."))
-                        tr_name = gr.Textbox(label="Your name", value="Me", max_lines=1,
+                        tr_name = gr.Textbox(label="Your name", value="", placeholder="e.g. Arun", max_lines=1,
                                              info="Shown on the tracker card so you can spot yours.")
                         with gr.Tabs(elem_id="bt-tr-channel-tabs"):
                             with gr.Tab("ntfy (easiest)"):
@@ -312,7 +313,7 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
     demo.load(
         h.on_page_load, inputs=[identity_box],
         outputs=[session, admin_store, target_date_input, interval_slider, engine_note, toggle_engine_btn,
-                 admin_status] + admin_views + live,
+                 admin_status] + admin_views + live + [user_name_input, tr_name],
         js=f"() => ({JS} ? {JS}.identity() : '')",
         show_progress="hidden",
     )
