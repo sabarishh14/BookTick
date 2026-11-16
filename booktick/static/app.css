@@ -29,6 +29,8 @@
 .bt-hidden { display: none !important; }
 .bt-i { width: 1em; height: 1em; flex: none; fill: none; stroke: currentColor; stroke-width: 2;
         stroke-linecap: round; stroke-linejoin: round; }
+/* Gradio colours the shapes inside an svg with the text colour; icons take the colour of where they sit. */
+.bt-i * { color: inherit !important; }
 .bt-root-html, .bt-root-html > .prose { padding: 0 !important; }
 
 /* ---------- header ---------- */
@@ -881,19 +883,7 @@ a.bt-btn { text-decoration: none !important; }
 .bt-fmt-chip:focus-visible { outline: none !important; box-shadow: 0 0 0 3px var(--bt-hot-bg), 0 0 0 1px var(--bt-brand) !important; }
 
 /* ---------- under the ntfy topic: phones can mute alerts, so test first ---------- */
-.bt-tip { margin-top: 10px; padding: 12px 14px; border-radius: 14px; background: var(--bt-surface-2); border: 1px solid var(--bt-line);
-  font-size: .84rem; line-height: 1.45; color: var(--bt-text); }
-.bt-tip-head { display: flex; align-items: center; gap: 8px; font-size: .88rem; }
-.bt-tip-head .bt-i { flex: none; font-size: 16px; color: var(--bt-brand) !important; stroke: var(--bt-brand) !important; }
-.bt-tip ul { margin: 6px 0 10px !important; padding: 0 0 0 24px !important; list-style: none !important; color: var(--bt-muted); }
-.bt-tip li { margin: 2px 0 !important; padding: 0 !important; }
-.bt-tip li b { color: var(--bt-text); font-weight: 650; }
-.bt-tip-test { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; margin: 0 !important; padding: 8px 14px !important;
-  border: none !important; border-radius: 10px !important; background: var(--bt-grad) !important; color: #fff !important;
-  font: inherit; font-size: .86rem; font-weight: 700; cursor: pointer; box-shadow: 0 6px 16px -8px rgba(244, 63, 122, .7);
-  transition: transform .12s, box-shadow .12s; }
-.bt-tip-test:hover { transform: translateY(-1px); box-shadow: 0 8px 18px -8px rgba(244, 63, 122, .8); }
-.bt-tip-test span { font-weight: 500; opacity: .9; }
+.bt-tip { margin-top: 10px; font-size: .84rem; line-height: 1.6; }
+.bt-tip .bt-callout-title { font-size: .88rem; }
+.bt-tip-test { margin: 2px 0 0 !important; font-weight: 750 !important; color: var(--bt-brand) !important; }
 .bt-tip-test * { color: inherit !important; }
-.bt-tip-test .bt-i { font-size: 15px; }
-@media (max-width: 640px) { .bt-tip-test span { display: none; } }

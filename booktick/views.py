@@ -89,9 +89,9 @@ def safe_href(url):
     return esc(url, quote=True) if re.match(r"^https?://", url, re.I) else None
 
 
-def callout(tone, title, body=""):
+def callout(tone, title, body="", icon_name=None):
     """A coloured message box. `title` and `body` are HTML, so escape user text first."""
-    icon_name = {"ok": "check", "err": "alert", "warn": "alert", "info": "info", "hot": "zap"}[tone]
+    icon_name = icon_name or {"ok": "check", "err": "alert", "warn": "alert", "info": "info", "hot": "zap"}[tone]
     body_html = f'<div class="bt-callout-body">{body}</div>' if body else ""
     return (f'<div class="bt-callout {tone}" role="status">{icon(icon_name)}'
             f'<div><div class="bt-callout-title">{title}</div>{body_html}</div></div>')
@@ -99,17 +99,15 @@ def callout(tone, title, body=""):
 
 def phone_tip_html(test_button_id):
     """Under the ntfy topic: phones can hold alerts back to save battery, so send a test first.
-    Its button presses the form's own Send test alert button (see data-bt-press in app.js)."""
-    return f"""
-<div class="bt-tip">
-  <div class="bt-tip-head">{icon("phone")}<b>Phones can mute alerts to save battery</b></div>
-  <ul>
-    <li><b>Android:</b> Settings → Apps → ntfy → Battery → <b>Unrestricted</b></li>
-    <li><b>iPhone:</b> Settings → Notifications → ntfy → <b>Allow</b>, and let it through Focus</li>
-  </ul>
-  <button type="button" class="bt-tip-test" data-bt-press="{test_button_id}">{icon("send")}Send a test alert
-    <span>and check it pops up</span></button>
-</div>"""
+    Its link presses the form's own Send test alert button (see data-bt-press in app.js)."""
+    return callout(
+        "info", "Phones can mute alerts to save battery",
+        "<b>Android:</b> Settings → Apps → ntfy → Battery → Unrestricted<br>"
+        "<b>iPhone:</b> Settings → Notifications → ntfy → Allow, and let it through Focus<br>"
+        f'<button type="button" class="bt-link bt-tip-test" data-bt-press="{test_button_id}">'
+        f'Send a test alert first{icon("arrow")}</button> and check it pops up.',
+        icon_name="phone",
+    ).replace('class="bt-callout info"', 'class="bt-callout info bt-tip"', 1)
 
 
 def hint(text):
