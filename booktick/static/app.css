@@ -573,15 +573,15 @@ a.bt-show:hover { border-color: var(--bt-brand); transform: translateY(-1px); bo
 .bt-day.is-range-start { border-radius: 8px 0 0 8px; }
 .bt-day.is-range-end { border-radius: 0 8px 8px 0; }
 
-/* ---------- show-time and format chips (Gradio CheckboxGroups) ---------- */
-#bt-slots .wrap, #bt-formats .wrap { gap: 8px !important; }
-#bt-slots label, #bt-formats label { margin: 0 !important; padding: 8px 14px !important; border: 1px solid var(--input-border-color) !important;
+/* ---------- show-time chips (a Gradio CheckboxGroup) ---------- */
+#bt-slots .wrap { gap: 8px !important; }
+#bt-slots label { margin: 0 !important; padding: 8px 14px !important; border: 1px solid var(--input-border-color) !important;
   border-radius: 999px !important; background: var(--input-background-fill) !important; box-shadow: none !important;
   font-size: .86rem !important; font-weight: 500; cursor: pointer; transition: border-color .15s, background .15s, color .15s; }
-#bt-slots label:hover, #bt-formats label:hover { border-color: var(--input-border-color-hover) !important; }
-#bt-slots label.selected, #bt-formats label.selected { border-color: var(--bt-brand) !important; background: color-mix(in srgb, var(--bt-brand) 8%, transparent) !important;
+#bt-slots label:hover { border-color: var(--input-border-color-hover) !important; }
+#bt-slots label.selected { border-color: var(--bt-brand) !important; background: color-mix(in srgb, var(--bt-brand) 8%, transparent) !important;
   color: var(--bt-brand); }
-#bt-slots input[type="checkbox"], #bt-formats input[type="checkbox"] { display: none; }
+#bt-slots input[type="checkbox"] { display: none; }
 
 /* ---------- city-wide preview ---------- */
 .bt-more { margin: 0 !important; font-size: .84rem; color: var(--bt-muted); }
@@ -858,3 +858,42 @@ a.bt-btn { text-decoration: none !important; }
   .bt-cp-badge { display: none; }
   .bt-cp-hit { display: inline; }
 }
+
+/* ---------- format chips: "Any format" by default, or the ones ticked ---------- */
+.bt-fmt { display: flex; flex-direction: column; gap: 2px; }
+.bt-fmt-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.bt-fmt-chip { display: inline-flex; align-items: center; gap: 6px; height: 38px; margin: 0 !important; padding: 0 15px !important;
+  border: 1px solid var(--input-border-color) !important; border-radius: 999px !important; background: var(--input-background-fill) !important;
+  box-shadow: none !important; color: var(--bt-text); font: inherit; font-size: .86rem; font-weight: 500; cursor: pointer;
+  transition: border-color .15s, background .15s, color .15s; }
+.bt-fmt-chip:hover { border-color: var(--input-border-color-hover) !important; }
+.bt-fmt-chip.is-on { border-color: var(--bt-brand) !important; background: color-mix(in srgb, var(--bt-brand) 8%, transparent) !important;
+  color: var(--bt-brand); font-weight: 600; }
+.bt-fmt-any { margin-right: 6px !important; font-weight: 650; }
+.bt-fmt-any.is-on { border-color: var(--bt-on-bg) !important; background: var(--bt-on-bg) !important; color: var(--bt-on-fg); }
+.bt-fmt-any .bt-i { font-size: 15px; stroke-width: 3; }
+.bt-fmt-chip *, .bt-mp-add *, .bt-mp-remove *, .bt-cp-icon * { color: inherit !important; }
+.bt-fmt-other { border-style: dashed !important; color: var(--bt-muted); }
+.bt-fmt-other .bt-i { font-size: 14px; }
+.bt-fmt-input { padding: 0 8px 0 14px !important; border-color: var(--bt-brand) !important; cursor: text; }
+.bt-fmt-input input { width: 130px; margin: 0 !important; padding: 0 !important; border: none !important; outline: none !important;
+  box-shadow: none !important; background: transparent !important; color: var(--bt-text) !important; font: inherit; }
+.bt-fmt-chip:focus-visible { outline: none !important; box-shadow: 0 0 0 3px var(--bt-hot-bg), 0 0 0 1px var(--bt-brand) !important; }
+
+/* ---------- under the ntfy topic: phones can mute alerts, so test first ---------- */
+.bt-tip { margin-top: 10px; padding: 12px 14px; border-radius: 14px; background: var(--bt-surface-2); border: 1px solid var(--bt-line);
+  font-size: .84rem; line-height: 1.45; color: var(--bt-text); }
+.bt-tip-head { display: flex; align-items: center; gap: 8px; font-size: .88rem; }
+.bt-tip-head .bt-i { flex: none; font-size: 16px; color: var(--bt-brand) !important; stroke: var(--bt-brand) !important; }
+.bt-tip ul { margin: 6px 0 10px !important; padding: 0 0 0 24px !important; list-style: none !important; color: var(--bt-muted); }
+.bt-tip li { margin: 2px 0 !important; padding: 0 !important; }
+.bt-tip li b { color: var(--bt-text); font-weight: 650; }
+.bt-tip-test { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; margin: 0 !important; padding: 8px 14px !important;
+  border: none !important; border-radius: 10px !important; background: var(--bt-grad) !important; color: #fff !important;
+  font: inherit; font-size: .86rem; font-weight: 700; cursor: pointer; box-shadow: 0 6px 16px -8px rgba(244, 63, 122, .7);
+  transition: transform .12s, box-shadow .12s; }
+.bt-tip-test:hover { transform: translateY(-1px); box-shadow: 0 8px 18px -8px rgba(244, 63, 122, .8); }
+.bt-tip-test span { font-weight: 500; opacity: .9; }
+.bt-tip-test * { color: inherit !important; }
+.bt-tip-test .bt-i { font-size: 15px; }
+@media (max-width: 640px) { .bt-tip-test span { display: none; } }

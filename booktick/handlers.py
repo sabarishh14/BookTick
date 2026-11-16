@@ -20,11 +20,12 @@ from .alerts import describe_results, sample_shows, send_task_notification
 from .config import (DEFAULT_CITY, DEFAULT_URL, MAX_CINEMA_DAYS, MAX_CINEMAS_PER_WATCHER, MAX_INTERVAL, MAX_RANGE_DAYS,
                      MAX_TRACKED_SHOWS, MIN_INTERVAL,
                      PREVIEW_CACHE, TIME_SLOTS, TRACK_DAYS_AHEAD)
-from .core import (add_log, date_label, dates_label, formats_label, log_lock, movie_list, movie_text, now_ist,
+from .core import (add_log, date_label, dates_label, format_label, formats_label, json_list, log_lock, movie_list,
+                   movie_text, now_ist,
                    parse_dates, plural, shorten, state, task_cinemas, to_date,
                    task_dates_label, tasks_lock, today_ist, wake_engine)
 from .storage import save_tasks
-from .views import (admin_status_html, callout, engine_note_html, esc, hint, icon,
+from .views import (admin_status_html, callout, city_formats, engine_note_html, esc, hint, icon,
                     logs_html, movie_catalog, show_groups, status_html, trackers_html, watcher_title, watchers_html)
 
 SLOT_CHOICES = [(label, key) for key, label, _, _ in TIME_SLOTS]
@@ -105,10 +106,12 @@ def on_page_load(identity):
     if not session["owner"]:  # the page script didn't run: watchers last for this tab only
         session["owner"] = access.digest(uuid.uuid4().hex, "owner")
     forget_admin = "-" if session.pop("admin_rejected", False) else keep()
-    name = name_for(session["owner"])  # this browser's own name, for both forms
+    # The name and ntfy topic this browser used last (or its own made-up name), for both forms.
+    saved_name, saved_topic = access.saved_defaults(identity)
+    name = saved_name or name_for(session["owner"])
     return ((session, forget_admin, today_ist(), gr.update(value=state["interval_sec"]),
              engine_note_html(session), engine_button(), admin_status_html(session))
-            + admin_controls(session) + live_views(session, force=True) + (name, name))
+            + admin_controls(session) + live_views(session, force=True) + (name, name, saved_topic, saved_topic))
 
 
 def admin_login(key, session):
@@ -141,8 +144,8 @@ def cinema_catalog(city, directory):
     for c in (directory or {}).get("cinemas") or []:
         name, _, area = district.cinema_label(c, city).partition(", ")
         cinemas.append({"u": c["url"], "n": name, "a": area, "m": c["movies"]})
-    return json.dumps({"city": city, "label": district.city_label(city), "cinemas": cinemas},
-                      separators=(",", ":"), ensure_ascii=False)
+    return json.dumps({"city": city, "label": district.city_label(city), "cinemas": cinemas,
+                       "formats": city_formats(directory)}, separators=(",", ":"), ensure_ascii=False)
 
 
 def on_city_change(city):
@@ -207,6 +210,11 @@ def watch_targets(cinema_value, cin_url=""):
     return "cinemas", links
 
 
+def picked_formats(value):
+    """The format picker's JSON list (or a list), as the chips spell them; [] for any format."""
+    return list(dict.fromkeys(format_label(f) for f in json_list(value, limit=8) if format_label(f)))
+
+
 def cinema_name(link):
     return district.known_cinema_name(link) or district.cinema_name_from_url(link)
 
@@ -231,7 +239,7 @@ def preview_shows(cinema_value, cin_url, movie_names, formats, slots, date_val):
     if not dates:
         return callout("err", "Pick show dates", f"Choose a day, or up to {MAX_RANGE_DAYS} days in a row.")
     date = dates[0]
-    task = {"movie_filter": movies, "formats": list(formats or []), "time_slots": slots or []}
+    task = {"movie_filter": movies, "formats": picked_formats(formats), "time_slots": slots or []}
     range_note = (f" · BookTick watches all of {dates_label(*dates)}" if dates[1] != dates[0] else "")
 
     if scope == "city":
@@ -379,7 +387,7 @@ def add_new_watcher(session, user_name, cinema_value, cin_url, movie_names, form
 
     name = shorten((user_name or "").strip() or name_for(session["owner"]), 40)
     cinemas = [{"url": link, "name": cinema_name(link)} for link in where] if scope == "cinemas" else []
-    picked_formats = list(dict.fromkeys(str(f).strip().upper() for f in formats or [] if str(f).strip()))
+    formats = picked_formats(formats)
     now = time.time()
     created = []
     for i, movie in enumerate(movies or [""]):
@@ -395,7 +403,7 @@ def add_new_watcher(session, user_name, cinema_value, cin_url, movie_names, form
             target_date=first_day,
             target_date_to=dates[1],
             movie_filter=movie,
-            formats=picked_formats,
+            formats=formats,
             time_slots=[s for s in (slots or []) if s in dict(SLOT_CHOICES).values()],
             max_alerts=int(max_alerts_val or 5),
             alert_count=0,

@@ -48,6 +48,27 @@ class Fields(unittest.TestCase):
         self.assertTrue(engine.show_matches(show("PVR", "2D"), [], []))
         self.assertTrue(engine.show_matches(show("PVR", "IMAX 2D"), [], "IMAX"))  # the old single format
 
+    def test_screen_features_are_found_in_screen_and_cinema_names(self):
+        laser = dict(show("Kasi RGB Laser Dolby Atmos", "2D"), audi="KASI THEATRE")
+        self.assertTrue(engine.show_matches(laser, [], ["Dolby Atmos"]))
+        self.assertTrue(engine.show_matches(laser, [], ["Laser"]))
+        self.assertFalse(engine.show_matches(laser, [], ["4K"]))
+        self.assertTrue(engine.show_matches(dict(show("PVR"), audi="AUDI 2 RECLINER"), [], ["Recliner"]))  # typed in
+        self.assertFalse(engine.show_matches(dict(show("PVR", "2D"), audi="SERVICE LOUNGE"), [], ["ICE"]))  # whole words
+        self.assertFalse(engine.show_matches(show("Cinema 3D 7.1", "2D"), [], ["3D"]))  # 3D is the show's, not the cinema's
+
+    def test_each_city_gets_its_own_format_chips(self):
+        directory = {"cinemas": [{"name": "Kasi RGB Laser Dolby Atmos"}, {"name": "Bharath 4K RGB Laser"},
+                                 {"name": "Murugan Cinemas PLF 4K"}, {"name": "Sangam Laser"}]}
+        self.assertEqual(views.city_formats(directory), ["IMAX", "4DX", "3D", "2D", "Laser", "4K", "Dolby Atmos", "PLF"])
+        self.assertEqual(views.city_formats(None), ["IMAX", "4DX", "3D", "2D"])
+
+    def test_the_name_and_topic_this_browser_used_last(self):
+        self.assertEqual(access.saved_defaults(json.dumps({"name": "  Sabs ", "ntfy": "ntfy.sh/sabs_tickets"})),
+                         ("Sabs", "sabs_tickets"))
+        self.assertEqual(access.saved_defaults(json.dumps({"name": "", "ntfy": "bad topic!"})), ("", ""))
+        self.assertEqual(access.saved_defaults("not json"), ("", ""))
+
     def test_picked_movies(self):
         self.assertEqual(movie_list('["Avengers: Doomsday", "Superhero", "Superhero", " "]'), ["Avengers: Doomsday", "Superhero"])
 

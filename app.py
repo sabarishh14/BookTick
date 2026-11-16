@@ -15,15 +15,16 @@ from booktick.actions import register as register_actions
 from booktick.guide import GUIDE_HTML
 from booktick.seatmap import register as register_seatmap
 from booktick.tracker import register as register_reports
-from booktick.config import (APP_NAME, DEFAULT_CINEMA_LABEL, DEFAULT_CITY, DEFAULT_URL, FORMAT_CHIPS, FORMAT_CHOICES,
+from booktick.config import (APP_NAME, DEFAULT_CINEMA_LABEL, DEFAULT_CITY, DEFAULT_URL, FORMAT_CHOICES,
                              MAX_INTERVAL, MIN_INTERVAL)
 from booktick.core import state, today_ist
 from booktick.district import city_label
 from booktick.engine import start_engine
 from booktick.storage import start_storage
 from booktick.theme import CSS, HEAD, favicon_file, theme
-from booktick.views import (about_html, admin_status_html, cinema_picker_html, date_picker_html,
+from booktick.views import (about_html, admin_status_html, cinema_picker_html, date_picker_html, format_picker_html,
                             engine_note_html, footer_html, header_html, icon, logs_skeleton, movie_picker_html,
+                            phone_tip_html,
                             status_skeleton, step_head, watchers_skeleton)
 
 # ---------------------------------------------------------------------------
@@ -82,10 +83,7 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
                         gr.HTML(movie_picker_html(), elem_classes="bt-root-html")
                         gr.HTML(cinema_picker_html(), elem_classes="bt-root-html")
                         cinema_info = gr.HTML(elem_id="bt-cinema-info", elem_classes="bt-root-html")
-                        formats_input = gr.CheckboxGroup(
-                            label="Format", choices=FORMAT_CHIPS, value=["IMAX"], elem_id="bt-formats",
-                            info="Any of the ones you tick. Leave all unticked for any format.",
-                        )
+                        gr.HTML(format_picker_html(), elem_classes="bt-root-html")
                         gr.HTML(date_picker_html(today_ist()), elem_classes="bt-root-html")
                         slots_input = gr.CheckboxGroup(
                             label="Show time", choices=h.SLOT_CHOICES, value=[], elem_id="bt-slots",
@@ -107,13 +105,15 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
                     with gr.Column(elem_classes="bt-step"):
                         gr.HTML(step_head("2", "Where should we alert you?", "Fill in one or more. ntfy is the quickest to set up."))
                         user_name_input = gr.Textbox(
-                            label="Your name", value="", placeholder="e.g. Arun", max_lines=1,
+                            label="Your name", value="", placeholder="e.g. Arun", max_lines=1, elem_id="bt-name",
                             info="Shown on the watcher card so you can spot yours.",
                         )
                         with gr.Tabs(elem_id="bt-channel-tabs"):
                             with gr.Tab("ntfy (easiest)"):
                                 gr.HTML('<p class="bt-hint">Install the free <b>ntfy</b> app, tap <b>+</b> and subscribe to a topic. Enter the same topic here.</p>')
-                                ntfy_topic_input = gr.Textbox(label="ntfy topic", placeholder="e.g. arun_tickets_982", max_lines=1)
+                                ntfy_topic_input = gr.Textbox(label="ntfy topic", placeholder="e.g. arun_tickets_982", max_lines=1,
+                                                              elem_id="bt-ntfy")
+                                gr.HTML(phone_tip_html("bt-test-btn"), elem_classes="bt-root-html")
                             with gr.Tab("Telegram"):
                                 gr.HTML('<p class="bt-hint">Create a bot with <b>@BotFather</b> and send it any message. Get your chat ID from <b>@userinfobot</b>.</p>')
                                 with gr.Row():
@@ -131,7 +131,8 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
                                  "After that, BookTick still tells you if seats free up or bookings close and reopen.",
                         )
                         with gr.Row(elem_classes="bt-cta-row"):
-                            test_notify_btn = gr.Button("Send test alert", variant="secondary", scale=1, min_width=150)
+                            test_notify_btn = gr.Button("Send test alert", variant="secondary", scale=1, min_width=150,
+                                                        elem_id="bt-test-btn")
                             add_task_btn = gr.Button("Start watching", variant="primary", scale=2, min_width=180)
                         add_result_lbl = gr.HTML(elem_id="bt-add-result")
 
@@ -170,11 +171,13 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
                                                info="Every movie at the cinema, or just one.")
                     with gr.Column(elem_classes="bt-step"):
                         gr.HTML(step_head(icon("bell"), "Where should the report go?", "Fill in one or more, like for alerts."))
-                        tr_name = gr.Textbox(label="Your name", value="", placeholder="e.g. Arun", max_lines=1,
+                        tr_name = gr.Textbox(label="Your name", value="", placeholder="e.g. Arun", max_lines=1, elem_id="bt-tr-name",
                                              info="Shown on the tracker card so you can spot yours.")
                         with gr.Tabs(elem_id="bt-tr-channel-tabs"):
                             with gr.Tab("ntfy (easiest)"):
-                                tr_ntfy = gr.Textbox(label="ntfy topic", placeholder="e.g. arun_tickets_982", max_lines=1)
+                                tr_ntfy = gr.Textbox(label="ntfy topic", placeholder="e.g. arun_tickets_982", max_lines=1,
+                                                     elem_id="bt-tr-ntfy")
+                                gr.HTML(phone_tip_html("bt-tr-test-btn"), elem_classes="bt-root-html")
                             with gr.Tab("Telegram"):
                                 with gr.Row():
                                     tr_tg_token = gr.Textbox(label="Bot token", type="password", placeholder="123456:ABC-DEF…")
@@ -183,7 +186,8 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
                                 tr_discord = gr.Textbox(label="Webhook URL", placeholder="https://discord.com/api/webhooks/…",
                                                         max_lines=1)
                         with gr.Row(elem_classes="bt-cta-row"):
-                            tr_test_btn = gr.Button("Send test alert", variant="secondary", scale=1, min_width=150)
+                            tr_test_btn = gr.Button("Send test alert", variant="secondary", scale=1, min_width=150,
+                                                    elem_id="bt-tr-test-btn")
                             tr_add_btn = gr.Button("Start tracking", variant="primary", scale=2, min_width=180)
                         tr_result = gr.HTML()
 
@@ -237,11 +241,12 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
     cinema_value = hidden_box("bt-cinema-value", json.dumps([DEFAULT_URL]))
     cinema_catalog = hidden_box("bt-cinema-catalog")
     cinema_add = hidden_box("bt-cinema-add")  # a pasted link, for the picker to add
+    formats_value = hidden_box("bt-formats-value", "[]")  # [] means any format
     action_box = hidden_box("bt-action")
     action_btn = gr.Button("Run action", elem_id="bt-action-btn", elem_classes="bt-hidden")
 
     # --- Events ---------------------------------------------------------------
-    pick_inputs = [cinema_value, cin_url_input, movie_value, formats_input, slots_input, target_date_input]
+    pick_inputs = [cinema_value, cin_url_input, movie_value, formats_value, slots_input, target_date_input]
     channels = [ntfy_topic_input, tg_token_input, tg_chat_input, disc_hook_input]
     admin_views = [engine_controls, unlock_row, lock_btn, clear_logs_btn]
     live = [status_box, watchers_box, log_box, trackers_box]
@@ -310,7 +315,7 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
     demo.load(
         h.on_page_load, inputs=[identity_box],
         outputs=[session, admin_store, target_date_input, interval_slider, engine_note, toggle_engine_btn,
-                 admin_status] + admin_views + live + [user_name_input, tr_name],
+                 admin_status] + admin_views + live + [user_name_input, tr_name, ntfy_topic_input, tr_ntfy],
         js=f"() => ({JS} ? {JS}.identity() : '')",
         show_progress="hidden",
     )

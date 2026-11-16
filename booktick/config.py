@@ -61,7 +61,29 @@ DEFAULT_URL = "https://www.district.in/movies/inox-phoenix-market-city-formerly-
 DEFAULT_CITY = "chennai"
 DEFAULT_CINEMA_LABEL = "INOX Phoenix Market City (formerly Jazz Cinemas), Velachery"
 FORMAT_CHOICES = ["ANY", "IMAX", "4DX", "3D", "2D"]       # the seat tracker's format list
-FORMAT_CHIPS = ["IMAX", "4DX", "Dolby", "ICE", "ScreenX", "3D", "2D"]  # a watcher's formats (none ticked = any)
+# A watcher's formats: (chip, words to look for, where). District's format field only says things
+# like "2D", "3D" or "IMAX 3D"; premium screens show up in the screen's or the cinema's name
+# ("4K RGB LASER DOLBY ATMOS"). "format" looks at the format and the screen's name; "any" also
+# at the cinema's name. Words match whole, so "ICE" doesn't match "SERVICE".
+FORMATS = [
+    ("IMAX", ["IMAX"], "format"),
+    ("4DX", ["4DX"], "format"),
+    ("3D", ["3D"], "format"),
+    ("2D", ["2D"], "format"),
+    ("Dolby Atmos", ["ATMOS"], "any"),
+    ("Laser", ["LASER"], "any"),
+    ("4K", ["4K"], "any"),
+    ("PLF", ["PLF"], "any"),
+    ("ICE", ["ICE"], "format"),
+    ("ScreenX", ["SCREENX", "SCREEN X"], "format"),
+    ("MX4D", ["MX4D"], "format"),
+    ("EPIQ", ["EPIQ"], "format"),
+    ("P[XL]", ["P[XL]", "PXL"], "format"),
+    ("Insignia", ["INSIGNIA"], "format"),
+    ("Onyx", ["ONYX"], "format"),
+    ("Dolby Cinema", ["DOLBY CINEMA"], "format"),
+]
+BASE_FORMATS = ["IMAX", "4DX", "3D", "2D"]  # always offered; the rest when a city's cinemas have them
 MAX_CINEMAS_PER_WATCHER = 5   # cinemas one watcher can follow…
 MAX_CINEMA_DAYS = 15          # …and cinemas × days, since each is a page checked every few seconds
 # (key, label, from hour, to hour). Hours past 24 run into the next morning, so a

@@ -39,7 +39,10 @@
     }
     return k;
   };
-  BT.identity = () => JSON.stringify({ key: BT.key(), admin: store.get(ADMIN) || "" });
+  BT.identity = () => JSON.stringify({
+    key: BT.key(), admin: store.get(ADMIN) || "",
+    name: store.get("booktick-name") || "", ntfy: store.get("booktick-ntfy") || "",  // last used, to fill in the forms
+  });
   // Python sends the admin key to keep after a successful unlock, or "-" to forget it.
   BT.storeAdmin = (k) => {
     if (k === "-") store.set(ADMIN, null);
@@ -178,6 +181,14 @@
     }
     const go = t.closest("[data-bt-goto]");
     if (go) { e.preventDefault(); BT.goto(go.getAttribute("data-bt-goto")); return; }
+    // A shortcut to one of the form's own buttons (the phone tip's "Send a test alert").
+    const press = t.closest("[data-bt-press]");
+    if (press) {
+      e.preventDefault();
+      const target = document.getElementById(press.getAttribute("data-bt-press"));
+      if (target) { target.scrollIntoView({ behavior: "smooth", block: "center" }); target.click(); }
+      return;
+    }
     const link = t.closest("[data-bt-device-link]");
     if (link) { e.preventDefault(); BT.copy(BT.deviceLink(), link); return; }
     const a = t.closest("[data-bt-action]");
@@ -989,6 +1000,7 @@ document.addEventListener("focusin", (e) => {
       // A different city: the cinemas picked in the last one don't carry over.
       if (next && S.cat && S.cat.city !== next.city && picks().length) { S.picks = []; save(); }
       S.cat = next;
+      if (next && BT.formats) BT.formats.choices(next.formats);
       if (!render()) setTimeout(() => BT.cinemas.load(json), 200);
       if (BT.movies && BT.movies.refresh) BT.movies.refresh();
       return [];
@@ -1018,4 +1030,135 @@ document.addEventListener("focusin", (e) => {
   };
   const wait = setInterval(() => { if (render()) clearInterval(wait); }, 200);
   setTimeout(() => clearInterval(wait), 30000);
+})();
+
+// ---------------------------------------------------------------------------
+// Format chips. "Any format" is the default; ticking a format turns it off, and clearing
+// them all turns it back on. The city's own screen features arrive with its cinemas
+// (BookTick.cinemas.load). Picks go into #bt-formats-value as a JSON list ([] = any).
+// ---------------------------------------------------------------------------
+(() => {
+  const BT = window.BookTick;
+  if (!BT || BT.formats) return;
+  const S = { choices: null, picks: null, typing: false };
+  const root = () => document.querySelector(".bt-fmt");
+  const field = () => document.querySelector("#bt-formats-value input, #bt-formats-value textarea");
+  const esc = (t) => String(t == null ? "" : t).replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const svg = (d) => '<svg class="bt-i" viewBox="0 0 24 24" aria-hidden="true">' + d + "</svg>";
+  const CHECK = '<path d="M20 6 9 17l-5-5"/>', PLUS = '<path d="M12 5v14M5 12h14"/>';
+  const low = (s) => String(s).toLowerCase();
+
+  const choices = () => {
+    if (S.choices === null) {
+      try { S.choices = JSON.parse((root() || {}).dataset ? root().dataset.choices || "[]" : "[]"); } catch (e) { S.choices = []; }
+    }
+    return S.choices;
+  };
+  const picks = () => {
+    if (S.picks === null) {
+      const el = field();
+      if (!el) return [];
+      try { const v = JSON.parse(el.value || "[]"); S.picks = Array.isArray(v) ? v.map(String).filter(Boolean) : []; }
+      catch (e) { S.picks = []; }
+    }
+    return S.picks;
+  };
+  const save = () => {
+    const el = field();
+    if (!el) return;
+    el.value = JSON.stringify(picks());
+    el.dispatchEvent(new Event("input", { bubbles: true }));  // tells Gradio the value changed
+  };
+  const render = () => {
+    const r = root();
+    if (!r || !field()) return false;
+    const list = picks();
+    const known = choices();
+    const extra = list.filter((p) => !known.some((k) => low(k) === low(p)));  // typed in, or from another city
+    const any = !list.length;
+    const chip = (label) => {
+      const on = list.some((p) => low(p) === low(label));
+      return '<button type="button" class="bt-fmt-chip' + (on ? " is-on" : "") + '" data-fmt="' + esc(label) +
+        '" aria-pressed="' + on + '">' + esc(label) + "</button>";
+    };
+    const other = S.typing
+      ? '<span class="bt-fmt-chip bt-fmt-input"><input type="text" maxlength="30" placeholder="e.g. Recliner" aria-label="Another format or screen"></span>'
+      : '<button type="button" class="bt-fmt-chip bt-fmt-other" data-fmt-other>' + svg(PLUS) + "Other</button>";
+    r.querySelector(".bt-fmt-chips").innerHTML =
+      '<button type="button" class="bt-fmt-chip bt-fmt-any' + (any ? " is-on" : "") + '" data-fmt-any aria-pressed="' + any +
+      '">' + (any ? svg(CHECK) : "") + "Any format</button>" + known.concat(extra).map(chip).join("") + other;
+    if (S.typing) { const input = r.querySelector(".bt-fmt-input input"); if (input) input.focus(); }
+    return true;
+  };
+  const toggle = (label) => {
+    const list = picks();
+    const i = list.findIndex((p) => low(p) === low(label));
+    if (i >= 0) list.splice(i, 1); else list.push(label);
+    save();
+  };
+  const addTyped = (input) => {
+    const text = input.value.replace(/\s+/g, " ").trim();
+    S.typing = false;
+    if (text && !picks().some((p) => low(p) === low(text))) { picks().push(text); save(); }
+    render();
+  };
+
+  document.addEventListener("click", (e) => {
+    const t = e.target instanceof Element ? e.target : null;
+    if (!t || !t.closest(".bt-fmt")) return;
+    if (t.closest("[data-fmt-any]")) { S.picks = []; save(); render(); return; }
+    if (t.closest("[data-fmt-other]")) { S.typing = true; render(); return; }
+    const chip = t.closest("[data-fmt]");
+    if (chip) { toggle(chip.getAttribute("data-fmt")); render(); }
+  });
+  document.addEventListener("keydown", (e) => {
+    const input = e.target instanceof Element ? e.target.closest(".bt-fmt-input input") : null;
+    if (!input) return;
+    if (e.key === "Enter") { e.preventDefault(); addTyped(input); }
+    if (e.key === "Escape") { e.preventDefault(); S.typing = false; render(); }
+  });
+  document.addEventListener("focusout", (e) => {
+    const input = e.target instanceof Element ? e.target.closest(".bt-fmt-input input") : null;
+    if (input) setTimeout(() => { if (S.typing) addTyped(input); }, 120);
+  });
+
+  BT.formats = {
+    // The chips for the city picked: the usual ones, then its cinemas' screen features.
+    choices: (list) => { if (Array.isArray(list) && list.length) { S.choices = list.map(String); render(); } return []; },
+  };
+  const wait = setInterval(() => { if (render()) clearInterval(wait); }, 200);
+  setTimeout(() => clearInterval(wait), 30000);
+})();
+
+// ---------------------------------------------------------------------------
+// Your name and ntfy topic: remembered in this browser, sent with BookTick.identity() so the
+// next visit starts with them, and kept the same in the watcher and tracker forms.
+// ---------------------------------------------------------------------------
+(() => {
+  const BT = window.BookTick;
+  if (!BT || BT.remember) return;
+  const FIELDS = { "bt-name": "name", "bt-tr-name": "name", "bt-ntfy": "ntfy", "bt-tr-ntfy": "ntfy" };
+  const KEYS = { name: "booktick-name", ntfy: "booktick-ntfy" };
+  const store = {
+    get: (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set: (k, v) => { try { if (v) localStorage.setItem(k, v); else localStorage.removeItem(k); } catch (e) {} },
+  };
+  BT.remember = { get: (what) => store.get(KEYS[what]) || "" };
+  document.addEventListener("change", (e) => {
+    const input = e.target instanceof Element ? e.target.closest("input, textarea") : null;
+    const box = input && input.closest("[id]");
+    const what = box && FIELDS[box.id];
+    if (!what) return;
+    const value = input.value.trim();
+    store.set(KEYS[what], value);
+    // The same value in the other form, so both always match.
+    Object.keys(FIELDS).filter((id) => FIELDS[id] === what && id !== box.id).forEach((id) => {
+      const other = document.querySelector("#" + id + " input, #" + id + " textarea");
+      if (other && other.value !== value) {
+        other.value = value;
+        other.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    });
+  });
 })();

@@ -16,7 +16,8 @@ from .actions import new_token
 from .alerts import describe_results, send_seatmap, send_task_notification
 from .config import (CITY_LIST_MAX_AGE, FETCH_WORKERS, KEEP_FINISHED_DAYS, MAX_BACKOFF, MAX_BLOCK_BACKOFF,
                      MAX_SEATMAPS, MORE_SEATS_GAP, MORE_SEATS_MIN, TIME_SLOTS)
-from .core import (add_log, dates_label, now_ist, plural, shorten, state, task_cinemas, task_dates, task_formats,
+from .core import (add_log, dates_label, format_matches, now_ist, plural, shorten, state, task_cinemas, task_dates,
+                   task_formats,
                    tasks_lock, to_date, today_ist, wake_engine)
 from .storage import save_tasks
 
@@ -38,8 +39,7 @@ def show_matches(show, keywords, formats):
         return False
     if isinstance(formats, str):
         formats = [] if formats.strip().upper() in ("", "ANY") else [formats]
-    shown = str(show["format"]).upper()
-    return not formats or any(str(f).strip().upper() in shown for f in formats)
+    return not formats or any(format_matches(f, show) for f in formats)
 
 
 def in_time_slots(show, slots):

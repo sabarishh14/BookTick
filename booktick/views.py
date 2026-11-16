@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 from . import access, district, engine, seatmap, tracker
 from .config import (ADMIN_KEY, APP_NAME, APP_TAGLINE, AUTHOR_NAME, DATABASE_URL, GITHUB_AVATAR, GITHUB_URL,
-                     MAX_CINEMAS_PER_WATCHER, MAX_RANGE_DAYS, TIME_SLOTS)
+                     BASE_FORMATS, FORMATS, MAX_CINEMAS_PER_WATCHER, MAX_RANGE_DAYS, TIME_SLOTS)
 from .core import (ago, date_is_past, dates_label, fmt_clock, fmt_price, formats_label, logs_for, now_ist, plural,
                    shorten, state, task_cinemas, task_dates, today_ist,
                    task_dates_label, tasks_lock, to_int)
@@ -47,6 +47,7 @@ ICONS = {
     "city": '<path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4M10 10h4M10 14h4M10 18h4"/>',
     "search": '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
     "x": '<path d="M18 6 6 18M6 6l12 12"/>',
+    "phone": '<rect x="5" y="2" width="14" height="20" rx="2.5"/><path d="M12 18h.01"/>',
     "shield": '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
 }
 
@@ -94,6 +95,21 @@ def callout(tone, title, body=""):
     body_html = f'<div class="bt-callout-body">{body}</div>' if body else ""
     return (f'<div class="bt-callout {tone}" role="status">{icon(icon_name)}'
             f'<div><div class="bt-callout-title">{title}</div>{body_html}</div></div>')
+
+
+def phone_tip_html(test_button_id):
+    """Under the ntfy topic: phones can hold alerts back to save battery, so send a test first.
+    Its button presses the form's own Send test alert button (see data-bt-press in app.js)."""
+    return f"""
+<div class="bt-tip">
+  <div class="bt-tip-head">{icon("phone")}<b>Phones can mute alerts to save battery</b></div>
+  <ul>
+    <li><b>Android:</b> Settings → Apps → ntfy → Battery → <b>Unrestricted</b></li>
+    <li><b>iPhone:</b> Settings → Notifications → ntfy → <b>Allow</b>, and let it through Focus</li>
+  </ul>
+  <button type="button" class="bt-tip-test" data-bt-press="{test_button_id}">{icon("send")}Send a test alert
+    <span>and check it pops up</span></button>
+</div>"""
 
 
 def hint(text):
@@ -203,6 +219,32 @@ def movie_picker_html():
       <button type="button" class="bt-btn primary bt-mp-done">Done</button>
     </div>
   </div>
+</div>"""
+
+
+def city_formats(directory):
+    """The format chips for a city: the usual ones, then the screen features its cinemas are named
+    for (in Chennai: Laser, 4K, Dolby Atmos, PLF), most common first."""
+    names = " | ".join(c["name"] for c in (directory or {}).get("cinemas") or []).upper()
+    found = Counter()
+    for label, words, _ in FORMATS:
+        if label not in BASE_FORMATS:
+            n = sum(len(re.findall(rf"(?<![A-Z0-9]){re.escape(w)}(?![A-Z0-9])", names)) for w in words)
+            if n:
+                found[label] = n
+    return BASE_FORMATS + [label for label, _ in found.most_common()]
+
+
+def format_picker_html():
+    """The format field: "Any format" (the default) or chips to tick (BookTick.formats in app.js).
+
+    The script writes the picks into #bt-formats-value as a JSON list; [] means any format.
+    """
+    return f"""
+<div class="bt-fmt" data-choices="{esc(json.dumps(BASE_FORMATS))}">
+  <span class="bt-field-label" id="bt-fmt-label">Format</span>
+  <span class="bt-field-info">Any format, or tick the ones you'd watch. Screen features come from your city's cinemas.</span>
+  <div class="bt-fmt-chips" role="group" aria-labelledby="bt-fmt-label"></div>
 </div>"""
 
 

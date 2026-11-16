@@ -44,6 +44,19 @@ def session_from_identity(raw):
     return {"owner": digest(key, "owner"), "admin": admin, "admin_rejected": bool(admin_key) and not admin}
 
 
+def saved_defaults(raw):
+    """(name, ntfy topic) this browser used last, from what the page script sends on load ("" if none)."""
+    try:
+        ident = json.loads(raw) if raw else {}
+    except ValueError:
+        ident = {}
+    if not isinstance(ident, dict):
+        return "", ""
+    name = " ".join(str(ident.get("name") or "").split())[:40]
+    topic = re.sub(r"^(https?://)?ntfy\.sh/", "", str(ident.get("ntfy") or "").strip()).strip("/")
+    return name, topic if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", topic) else ""
+
+
 def network_id(request):
     """A hash of the visitor's IP address (Hugging Face puts it in X-Forwarded-For)."""
     if request is None:

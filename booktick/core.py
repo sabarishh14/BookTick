@@ -1,10 +1,11 @@
 """Time and text helpers, the shared in-memory state, and the activity log."""
 import json
+import re
 import threading
 import time
 from datetime import datetime, timedelta, timezone
 
-from .config import DEFAULT_INTERVAL, MAX_LOG_LINES, MAX_RANGE_DAYS
+from .config import DEFAULT_INTERVAL, FORMATS, MAX_LOG_LINES, MAX_RANGE_DAYS
 
 # ---------------------------------------------------------------------------
 # Time: everything is shown in Indian Standard Time
@@ -129,16 +130,7 @@ def fmt_price(price):
 
 def movie_list(value):
     """The movies picked: the movie picker sends a JSON list of names (plain text works too)."""
-    if isinstance(value, str) and value.strip().startswith("["):
-        try:
-            value = json.loads(value)
-        except ValueError:
-            pass
-    if isinstance(value, (list, tuple)):
-        names = [str(v).strip() for v in value]
-    else:
-        names = [str(value or "").strip()]
-    return list(dict.fromkeys(n for n in names if n))
+    return json_list(value)
 
 
 def movie_text(value):
@@ -254,16 +246,47 @@ def task_cinemas(task):
 
 
 def task_formats(task):
-    """The formats a watcher wants, upper-case, or [] for any format."""
+    """The formats a watcher wants, as their chips say ("IMAX", "Dolby Atmos"), or [] for any format."""
     if isinstance(task.get("formats"), list):
-        return [str(f).strip().upper() for f in task["formats"] if str(f).strip()]
-    fmt = str(task.get("format_filter") or "ANY").strip().upper()
-    return [] if fmt in ("", "ANY") else [fmt]
+        return [str(f).strip() for f in task["formats"] if str(f).strip()]
+    fmt = str(task.get("format_filter") or "ANY").strip()
+    return [] if fmt.upper() in ("", "ANY") else [fmt]
 
 
 def formats_label(task):
     formats = task_formats(task)
     return ", ".join(formats) if formats else "Any format"
+
+
+_FORMAT_RULES = {label.upper(): (label, words, where) for label, words, where in FORMATS}
+
+
+def format_label(text):
+    """A known format's own spelling ("4dx" -> "4DX"), or the text as typed."""
+    text = " ".join(str(text or "").split())[:30]
+    return _FORMAT_RULES.get(text.upper(), (text,))[0]
+
+
+def format_matches(fmt, show):
+    """Does a show fit one of a watcher's formats? Known ones look where they turn up (see FORMATS);
+    anything typed in is looked for in the show's format, screen name and cinema name. Words match
+    whole, so "ICE" doesn't match "SERVICE" and "2D" still matches "IMAX 2D"."""
+    _, words, where = _FORMAT_RULES.get(str(fmt).strip().upper(), (fmt, [str(fmt).strip().upper()], "any"))
+    places = [show.get("format"), show.get("audi")] + ([show.get("cinema")] if where == "any" else [])
+    text = " | ".join(str(p) for p in places if p).upper()
+    return any(re.search(rf"(?<![A-Z0-9]){re.escape(w)}(?![A-Z0-9])", text) for w in words if w)
+
+
+def json_list(value, limit=None):
+    """A JSON list of strings from one of the page script's hidden boxes (plain text works too), deduplicated."""
+    if isinstance(value, str) and value.strip().startswith("["):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            pass
+    items = [str(v).strip() for v in value] if isinstance(value, (list, tuple)) else [str(value or "").strip()]
+    out = list(dict.fromkeys(i for i in items if i))
+    return out[:limit] if limit else out
 
 
 def task_dates_label(task):
