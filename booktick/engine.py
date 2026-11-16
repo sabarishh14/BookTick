@@ -131,10 +131,13 @@ def show_cinema(show):
     return district.cinema_id_from_url(show.get("cinema_url")) or str(show.get("cinema") or "").strip().lower()
 
 
-def cinemas_text(shows):
-    """'AGS T. Nagar', or 'AGS T. Nagar and 2 more cinemas'."""
-    names = list(dict.fromkeys(str(s.get("cinema") or "a cinema") for s in shows))
-    return names[0] if len(names) == 1 else f"{names[0]} and {plural(len(names) - 1, 'more cinema')}"
+def shows_place(task, shows):
+    """Where a city-wide alert's shows are: the cinema, or '27 cinemas in Chennai' (the alert
+    then lists them, one line each)."""
+    names = list(dict.fromkeys(str(s.get("cinema") or "") for s in shows))
+    if len(names) == 1 and names[0]:
+        return names[0]
+    return f"{len(names)} cinemas in {district.city_label(task.get('city'))}"
 
 
 def check_task(task, page, date, place, shows):
@@ -223,7 +226,7 @@ def check_task(task, page, date, place, shows):
             task["also_open_ts"] = dict(task.get("also_open_ts") or {}, **{page_base(page): now})
             task["last_more_ts"] = now
         elif phase == "open" and spread and now - task.get("last_spread_ts", 0) >= CITY_SPREAD_GAP:
-            event, alert_shows, where = "spread", spread, cinemas_text(spread)  # opened at more cinemas
+            event, alert_shows = "spread", spread  # opened at more cinemas
             told |= {f"{date}|{show_cinema(s)}" for s in spread}
             task.update(last_spread_ts=now, last_more_ts=now)
         elif (open_now and before is not None and task.get("reminders_left", 0) <= 0
@@ -258,6 +261,8 @@ def check_task(task, page, date, place, shows):
     name = snapshot.get("user_label", "Watcher")
     # Closed means every one of its cinemas, so name them all; anything else is about this page's cinema.
     place_name = task_place(snapshot) if event == "closed" else where
+    if entry is None and city and event != "closed" and alert_shows:
+        place_name = shows_place(snapshot, alert_shows)  # a city's listings: name the cinemas, not just the city
     count = max_alerts - snapshot.get("reminders_left", 0)
     shows_text = plural(len(alert_shows), "matching show")
     add_log({
@@ -285,7 +290,7 @@ def request_seatmap(task, shows, place):
     """
     with_maps = [s for s in shows if "/seat-layout/" in s.get("url", "")]
     for show in with_maps[:MAX_SEATMAPS]:
-        seatmap.request(task, show, place, seatmap_ready)
+        seatmap.request(task, show, show.get("cinema") or place, seatmap_ready)  # each map says its cinema
     if len(with_maps) > MAX_SEATMAPS:
         add_log(f"🗺️ [{task.get('user_label', 'Watcher')}] seat maps for the first {MAX_SEATMAPS} of "
                 f"{len(with_maps)} shows only.", owners_of(task))

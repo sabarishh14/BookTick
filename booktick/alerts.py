@@ -9,7 +9,7 @@ import requests
 from .actions import action_url
 from .config import APP_NAME, BRAND_DISCORD_COLOR
 from .core import fmt_price, fmt_when, now_ist, plural, redact, seats_text, shorten, task_cinemas
-from .district import query_url
+from .district import city_label, query_url
 
 
 def response_error(res):
@@ -20,13 +20,32 @@ def response_error(res):
         return f"HTTP {res.status_code}"
 
 
-def show_lines(shows, limit=5):
-    """One line per show; city-wide alerts also name the cinema."""
-    many_cinemas = len({s.get("cinema") for s in shows}) > 1
+CINEMA_LINES = 8  # an alert about shows at several cinemas lists this many, one line each
+
+
+def cinema_short(name, city=None):
+    """A cinema's name without its city on the end: 'PVR Palazzo, The Nexus Vijaya Mall'."""
+    name = str(name or "Cinema")
+    tail = f", {city_label(city)}" if city else ""
+    return name[: -len(tail)] if tail and name.lower().endswith(tail.lower()) and len(name) > len(tail) else name
+
+
+def show_lines(shows, limit=5, city=None):
+    """One line per show. Shows at several cinemas (a city-wide alert) get one line per cinema
+    instead, so every cinema is named, not just the first few shows'."""
+    cinemas = list(dict.fromkeys(s.get("cinema") or "Cinema" for s in shows))
     lines = []
+    if len(cinemas) > 1:
+        for name in cinemas[:CINEMA_LINES]:
+            mine = [s for s in shows if (s.get("cinema") or "Cinema") == name]
+            formats = ", ".join(dict.fromkeys(str(s["format"]) for s in mine))
+            lines.append(f"• {shorten(cinema_short(name, city), 60)} · {formats} · "
+                         f"{plural(len(mine), 'show')} from {fmt_when(mine[0]['start'])}")
+        if len(cinemas) > CINEMA_LINES:
+            lines.append(f"…and {plural(len(cinemas) - CINEMA_LINES, 'more cinema')}")
+        return lines
     for s in shows[:limit]:
-        where = f"{shorten(s.get('cinema'), 40)} · " if many_cinemas and s.get("cinema") else ""
-        lines.append(f"• {fmt_when(s['start'])} · {where}{s['format']} · {seats_text(s)} · {fmt_price(s['price'])}")
+        lines.append(f"• {fmt_when(s['start'])} · {s['format']} · {seats_text(s)} · {fmt_price(s['price'])}")
     if len(shows) > limit:
         lines.append(f"…and {len(shows) - limit} more")
     return lines
@@ -94,7 +113,7 @@ def send_task_notification(task, shows, place, kind="opened", count=1, max_alert
         headline, intro = f"🧪 Test alert from {APP_NAME}", "Your alerts work. A real alert will look like this:"
     else:
         headline, intro = wording(kind, name, shows, count, max_alerts, reason)
-    lines = show_lines(shows)
+    lines = show_lines(shows, city=task.get("city"))
     if shows:
         links = alert_links(shows[0])
     elif task_cinemas(task) and task.get("scope") != "city":

@@ -171,7 +171,7 @@ class AnywhereAndCinemas(unittest.TestCase):
     def test_opens_anywhere_then_says_when_a_cinema_of_yours_opens(self):
         engine.check_task(self.task, self.city_page, today_ist(), "Cinemas in Chennai", [show("Kasi")])
         self.assertEqual(self.kinds(), ["opened"])
-        self.assertEqual(self.send.call_args.args[2], "Cinemas in Chennai")
+        self.assertEqual(self.send.call_args.args[2], "Kasi")  # the cinema that opened, not just the city
         engine.check_task(self.task, self.pages[PVR], today_ist(), "PVR Palazzo", [])
         engine.check_task(self.task, self.pages[INOX], today_ist(), "INOX Velachery", [show("INOX")])
         self.assertEqual(self.kinds(), ["opened", "also_open"])
@@ -244,7 +244,7 @@ class AcrossTheCity(unittest.TestCase):
         self.wait()
         self.check(at("Kasi", 1), at("AGS", 2), at("Rohini", 3), at("Rohini", 3, n=2))
         self.assertEqual(self.kinds(), ["opened", "spread"])
-        self.assertEqual(self.send.call_args.args[2], "AGS and 1 more cinema")
+        self.assertEqual(self.send.call_args.args[2], "2 cinemas in Chennai")  # the alert lists them
         self.assertEqual(len(self.send.call_args.args[1]), 3)  # their shows only, not Kasi's
         self.wait()
         self.check(at("Kasi", 1), at("AGS", 2), at("Rohini", 3))
@@ -258,6 +258,16 @@ class AcrossTheCity(unittest.TestCase):
         self.check(at("Kasi", 1), at("AGS", 2), at("Rohini", 3))
         self.assertEqual(self.kinds(), ["spread"])
         self.assertEqual(self.send.call_args.args[2], "Rohini")
+
+    def test_the_alert_names_every_cinema(self):
+        from booktick import alerts
+        one = alerts.show_lines([at("Kasi", 1), at("Kasi", 1, n=2)], city="chennai")
+        self.assertEqual(len(one), 2)  # one cinema: a line per show (the alert's place line names it)
+        names = [f"Cinema {i}, Velachery, Chennai" for i in range(10)]
+        lines = alerts.show_lines([dict(at("X", i), cinema=n) for i, n in enumerate(names)], city="chennai")
+        self.assertEqual(lines[0].split(" · ")[0], "• Cinema 0, Velachery")  # the city is cut off the end
+        self.assertEqual(len(lines), alerts.CINEMA_LINES + 1)
+        self.assertEqual(lines[-1], "…and 2 more cinemas")
 
     def test_its_own_cinemas_arent_named_twice(self):
         self.task["cinemas"] = [{"url": "https://www.district.in/movies/ags-CD2", "name": "AGS"}]
