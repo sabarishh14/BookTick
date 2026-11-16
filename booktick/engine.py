@@ -16,8 +16,8 @@ from .actions import new_token
 from .alerts import describe_results, send_seatmap, send_task_notification
 from .config import (CITY_LIST_MAX_AGE, FETCH_WORKERS, KEEP_FINISHED_DAYS, MAX_BACKOFF, MAX_BLOCK_BACKOFF,
                      MAX_SEATMAPS, MORE_SEATS_GAP, MORE_SEATS_MIN, TIME_SLOTS)
-from .core import (add_log, dates_label, now_ist, plural, shorten, state, task_dates, tasks_lock, to_date,
-                   today_ist, wake_engine)
+from .core import (add_log, dates_label, now_ist, plural, shorten, state, task_cinemas, task_dates, task_formats,
+                   tasks_lock, to_date, today_ist, wake_engine)
 from .storage import save_tasks
 
 
@@ -32,11 +32,14 @@ def on_date(show, date):
     return not date or not show["start"] or show["start"].strftime("%Y-%m-%d") == date
 
 
-def show_matches(show, keywords, fmt_filter):
+def show_matches(show, keywords, formats):
+    """The movie (any keyword in its title) in one of the formats ([] or "ANY" for any format)."""
     if keywords and not any(k in show["title"].lower() for k in keywords):
         return False
-    fmt = (fmt_filter or "ANY").strip().upper()
-    return fmt in ("", "ANY") or fmt in str(show["format"]).upper()
+    if isinstance(formats, str):
+        formats = [] if formats.strip().upper() in ("", "ANY") else [formats]
+    shown = str(show["format"]).upper()
+    return not formats or any(str(f).strip().upper() in shown for f in formats)
 
 
 def in_time_slots(show, slots):
@@ -54,14 +57,33 @@ def seats_open(show):
 
 def wanted(task, show, date):
     """Does this show match the watcher (ignoring whether it has seats)?"""
-    return (on_date(show, date) and show_matches(show, split_keywords(task.get("movie_filter")), task.get("format_filter"))
+    return (on_date(show, date) and show_matches(show, split_keywords(task.get("movie_filter")), task_formats(task))
             and in_time_slots(show, task.get("time_slots") or []))
 
 
+def cinema_label(cinema):
+    return cinema.get("name") or district.cinema_name_from_url(cinema.get("url", ""))
+
+
 def task_place(task):
+    """'Cinemas in Chennai', 'PVR Palazzo', or 'PVR Palazzo and 2 more cinemas'."""
     if task.get("scope") == "city":
         return f"Cinemas in {district.city_label(task.get('city'))}"
-    return task.get("cinema_name") or district.cinema_name_from_url(task.get("cinema_url", ""))
+    cinemas = task_cinemas(task)
+    if not cinemas:
+        return "a cinema"
+    first = cinema_label(cinemas[0])
+    return first if len(cinemas) == 1 else f"{first} and {plural(len(cinemas) - 1, 'more cinema')}"
+
+
+def page_base(page):
+    return str(page or "").split("?")[0]
+
+
+def cinema_for_page(task, page):
+    """The watcher's cinema entry that a cinema page belongs to, or None."""
+    base = page_base(page)
+    return next((c for c in task_cinemas(task) if page_base(c["url"]) == base), None)
 
 
 # ---------------------------------------------------------------------------
@@ -74,7 +96,7 @@ def owners_of(task):
     return (task.get("owner"),)
 
 
-def set_result(task, page, result):
+def set_result(task, page, result, where=None):
     """Show `result` on the watcher's card, and log it when it changes. Call with tasks_lock."""
     task["last_checked"] = now_ist().strftime("%H:%M:%S")
     task["last_checked_ts"] = time.time()
@@ -82,7 +104,7 @@ def set_result(task, page, result):
     key = (task.get("id"), page)
     if _results.get(key) != result:
         _results[key] = result
-        add_log(f"[{task.get('user_label', 'Watcher')}] {task_place(task)}: {result}", owners_of(task))
+        add_log(f"[{task.get('user_label', 'Watcher')}] {where or task_place(task)}: {result}", owners_of(task))
 
 
 def seat_counts(shows):
@@ -118,8 +140,13 @@ def check_task(task, page, date, place, shows):
     with tasks_lock:
         if state["tasks"].get(task.get("id")) is not task or task.get("status") != "Active":
             return  # deleted or paused while this check was running
-        if task.get("scope") != "city" and place != district.cinema_name_from_url(task.get("cinema_url")):
-            task["cinema_name"] = place  # District's own name, when the page gives one
+        if task.get("scope") != "city":
+            if not task.get("cinemas") and task.get("cinema_url"):
+                task["cinemas"] = task_cinemas(task)  # a watcher from before a watcher could follow several cinemas
+            entry = cinema_for_page(task, page)
+            if entry is not None and place and place != district.cinema_name_from_url(entry["url"]):
+                entry["name"] = place  # District's own name, when the page gives one
+        where = place if task.get("scope") != "city" else task_place(task)
 
         # Seats per matching show on each of the watcher's pages (one per date, or per movie).
         pages = task.setdefault("page_seats", {})
@@ -130,13 +157,16 @@ def check_task(task, page, date, place, shows):
         is_open = any(n > 0 for seats in known.values() for n in seats.values())
         phase = task.get("phase") or "waiting"
 
-        where = "across the city" if task.get("scope") == "city" else "listed"
+        listed_where = "across the city" if task.get("scope") == "city" else "listed"
         set_result(task, page, f"🔥 {day}{plural(len(open_now), 'show')} open" if open_now
                    else f"{day}Sold out · {plural(len(matched), 'matching show')}" if matched
-                   else f"{day}No match · {plural(len(listed), 'show')} {where}" if listed
-                   else f"{day}No shows listed yet")
+                   else f"{day}No match · {plural(len(listed), 'show')} {listed_where}" if listed
+                   else f"{day}No shows listed yet", where)
 
         max_alerts = max(1, int(task.get("max_alerts", 5)))
+        # Which of its cinemas have seats now (only matters for a watcher on several).
+        open_places = sorted({page_base(p) for p, seats in known.items() if any(n > 0 for n in seats.values())})
+        newly_open = page_base(page) in open_places and page_base(page) not in (task.get("open_places") or [])
         if is_open and phase != "open" and open_now:
             event = "reopened" if phase == "closed" else "opened"
             task.update(phase="open", reminders_left=max_alerts - 1)
@@ -146,6 +176,10 @@ def check_task(task, page, date, place, shows):
             reason = "sold_out" if any(known.values()) else "pulled"
             alert_shows = matched
             task.update(phase="closed", reminders_left=0)
+        elif (phase == "open" and open_now and newly_open and len(task_cinemas(task)) > 1
+              and now - task.get("last_more_ts", 0) >= MORE_SEATS_GAP):
+            event = "also_open"  # bookings opened at another of its cinemas
+            task["last_more_ts"] = now
         elif (open_now and before is not None and task.get("reminders_left", 0) <= 0
               and now - task.get("last_more_ts", 0) >= MORE_SEATS_GAP):
             freed = [s for s in open_now if gained_seats(before, s)]
@@ -156,6 +190,10 @@ def check_task(task, page, date, place, shows):
                 and now - task.get("last_alert_ts", 0) >= state["interval_sec"] * 0.8):
             event = "reminder"  # at most one per round, even when several pages are open
             task["reminders_left"] -= 1
+        if task.get("scope") != "city" and open_places != (task.get("open_places") or []):
+            task["open_places"] = open_places
+            if event is None:
+                save_tasks()
         if event is None:
             return
         task["alert_count"] = int(task.get("alert_count", 0)) + 1
@@ -167,7 +205,8 @@ def check_task(task, page, date, place, shows):
 
     owners = owners_of(snapshot)
     name = snapshot.get("user_label", "Watcher")
-    place_name = task_place(snapshot)
+    # Closed means every one of its cinemas, so name them all; anything else is about this page's cinema.
+    place_name = task_place(snapshot) if event == "closed" else where
     count = max_alerts - snapshot.get("reminders_left", 0)
     shows_text = plural(len(alert_shows), "matching show")
     add_log({
@@ -175,13 +214,14 @@ def check_task(task, page, date, place, shows):
         "reopened": f"🔁 [{name}] bookings reopened at {place_name}: {shows_text} with seats! Alerting…",
         "reminder": f"🔥 [{name}] still open at {place_name}. Reminder {count}/{max_alerts}…",
         "more_seats": f"🎟️ [{name}] seats freed up at {place_name} in {shows_text}. Alerting…",
+        "also_open": f"🔥 [{name}] bookings are now also open at {place_name}: {shows_text} with seats! Alerting…",
         "closed": f"⏸️ [{name}] bookings closed at {place_name} "
                   f"({'sold out' if reason == 'sold_out' else 'taken off sale'}). Still watching.",
     }[event], owners)
     results = send_task_notification(snapshot, alert_shows, place_name, kind=event, count=count,
                                      max_alerts=max_alerts, reason=reason, date=date)
     add_log(f"   [{name}] {describe_results(results)}", owners)
-    if event in ("opened", "reopened"):
+    if event in ("opened", "reopened", "also_open"):
         request_seatmap(snapshot, alert_shows, place_name)
 
 
@@ -240,8 +280,7 @@ def page_jobs(task, today):
     if not dates:
         return []
     if task.get("scope") != "city":
-        url = task.get("cinema_url")
-        return [("cinema", district.query_url(url, d), d) for d in dates] if url else []
+        return [("cinema", district.query_url(c["url"], d), d) for c in task_cinemas(task) for d in dates]
     city = task.get("city")
     if not city:
         return []
@@ -310,7 +349,7 @@ def page_succeeded(page, kind, job):
     state["last_check_time"] = now_ist()
     if recovered:
         owners = {t.get("owner") for t in job["tasks"]}
-        add_log(f"✅ {shorten(page_name(job), 60)} is loading again.", owners)
+        add_log(f"✅ {shorten(page_name(job, page), 60)} is loading again.", owners)
 
 
 def page_failed(page, job, err):
@@ -328,19 +367,20 @@ def page_failed(page, job, err):
     with tasks_lock:
         for task in job["tasks"]:
             if state["tasks"].get(task.get("id")) is task and task.get("status") == "Active":
-                set_result(task, page, "⚠️ Page didn't load. Retrying")
+                set_result(task, page, "⚠️ Page didn't load. Retrying", page_name(job, page))
     if fails == 1:
         owners = {t.get("owner") for t in job["tasks"]}
-        add_log(f"⚠️ Couldn't load {shorten(page_name(job), 60)}: {shorten(err, 120)}", owners)
+        add_log(f"⚠️ Couldn't load {shorten(page_name(job, page), 60)}: {shorten(err, 120)}", owners)
 
 
-def page_name(job):
+def page_name(job, page=""):
     first = job["tasks"][0] if job.get("tasks") else {}
     if job["kind"] == "list":
         return f"the cinema list for {district.city_label(job.get('city'))}"
     if job["kind"] == "city":
         return f"{shorten(first.get('movie_filter'), 30)} in {district.city_label(job.get('city'))}"
-    return task_place(first) if first else "a cinema page"
+    entry = cinema_for_page(first, page) if first else None
+    return cinema_label(entry) if entry else district.cinema_name_from_url(page) if page else "a cinema page"
 
 
 def housekeeping(today):
@@ -421,3 +461,28 @@ def reset_page_timers():
             if not entry["fails"]:
                 entry["next"] = 0
     wake_engine.set()
+
+
+# ---------------------------------------------------------------------------
+# For the watcher cards
+# ---------------------------------------------------------------------------
+def cinema_statuses(task_id):
+    """[(cinema name, link, state, shows with seats)] for a watcher on cinemas, from its last checks.
+
+    state is "open", "soldout" (matching shows, none with seats), "waiting" (no matching shows
+    yet) or "unchecked". Read under the lock, since the engine updates these while checking.
+    """
+    with tasks_lock:
+        task = state["tasks"].get(task_id)
+        if not task:
+            return []
+        pages = {p: dict(seats) for p, seats in (task.get("page_seats") or {}).items()}
+        cinemas = [dict(c) for c in task_cinemas(task)]
+    out = []
+    for c in cinemas:
+        mine = [seats for p, seats in pages.items() if page_base(p) == page_base(c["url"])]
+        with_seats = sum(1 for seats in mine for n in seats.values() if n > 0)
+        any_shows = any(seats for seats in mine)
+        status = ("unchecked" if not mine else "open" if with_seats else "soldout" if any_shows else "waiting")
+        out.append((cinema_label(c), c["url"], status, with_seats))
+    return out

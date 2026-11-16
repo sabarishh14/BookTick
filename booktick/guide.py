@@ -1,5 +1,5 @@
 """The "How to use" tab: the full guide, opened from the tab bar or the header button."""
-from .config import MAX_RANGE_DAYS, MAX_SEATMAPS, MAX_TRACKED_SHOWS, MAX_TRACKERS_PER_PERSON, MAX_WATCHERS_PER_PERSON
+from .config import MAX_CINEMAS_PER_WATCHER, MAX_RANGE_DAYS, MAX_SEATMAPS, MAX_TRACKED_SHOWS, MAX_TRACKERS_PER_PERSON, MAX_WATCHERS_PER_PERSON
 from .views import RESTART_TIP
 
 GUIDE_HTML = f"""
@@ -7,12 +7,14 @@ GUIDE_HTML = f"""
 <section>
   <h2>1. Set up a watcher</h2>
   <ol>
-    <li><b>City and cinema.</b> Pick your city, then a cinema. Pick <b>Any cinema in &lt;city&gt;</b> to hear the moment your
-      movie opens anywhere there. A cinema that isn't listed? Paste its link from district.in under <b>Or paste a cinema link</b>.</li>
-    <li><b>Movie.</b> Tap <b>Choose a movie</b> and pick a poster: <b>Now showing</b> puts your cinema's movies first,
+    <li><b>Movie.</b> Tap <b>Choose a movie</b> and pick a poster: <b>Now showing</b> puts your cinemas' movies first,
       and <b>Coming soon</b> has every upcoming movie on District with its release date. Search by name or filter by
-      language, and pick more than one if you like. Not on District yet? Type its name and tap <b>Watch for it anyway</b>.</li>
-    <li><b>Format.</b> IMAX, 4DX, 3D, 2D, your own, or ANY.</li>
+      language. Each movie gets its own watcher, so pick two and you get two. Not on District yet? Type its name and
+      tap <b>Watch for it anyway</b>.</li>
+    <li><b>Where.</b> Pick up to {MAX_CINEMAS_PER_WATCHER} cinemas in your city, and you hear from whichever opens first
+      (then again if another one opens). Or pick <b>Anywhere in &lt;city&gt;</b> to hear the moment it opens at any
+      cinema there. A cinema that isn't listed? Paste its link from district.in under <b>Or paste a cinema link</b>.</li>
+    <li><b>Format.</b> Tick the ones you'd watch, like IMAX and 4DX, or leave them all unticked for any format.</li>
     <li><b>Show date.</b> One day, or up to {MAX_RANGE_DAYS} in a row with <b>A few days</b>. Times are Indian Standard Time.</li>
     <li><b>Show time.</b> Tick morning, afternoon, evening or night, or leave them all unticked for any time.</li>
     <li><b>Preview shows</b> shows what's listed right now, so you can check your filters before you start.</li>
@@ -37,6 +39,7 @@ GUIDE_HTML = f"""
   <ul class="alerts">
     <li><b>🚨 Tickets open</b> As soon as a matching show has seats. Tap it to open the theatre's page for that date.
       It repeats as reminders (set by <b>Alerts when bookings open</b>) until you tap a button in it.</li>
+    <li><b>🚨 Now also open</b> Watching a few cinemas? When another one opens later, you hear about that too.</li>
     <li><b>🗺️ Seat map</b> A few seconds later, a picture of each matching show's seats (up to {MAX_SEATMAPS}): outlined seats
       are free, grey ones are sold or blocked, and the screen is at the bottom. It's just for looking, so tapping it does nothing.</li>
     <li><b>⏸️ Bookings closed</b> If the shows sell out or are taken off sale, BookTick tells you and keeps watching.</li>

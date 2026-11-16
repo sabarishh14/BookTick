@@ -490,6 +490,20 @@ def known_cinema_name(url):
     return next((c["name"] for d in lists for c in d["cinemas"] if cid and c["id"] == cid), None)
 
 
+def poster_for(name):
+    """A movie's poster from the lists already loaded (cities and coming soon), or None. No network."""
+    key = str(name or "").strip().lower()
+    if not key:
+        return None
+    with _cache_lock:
+        lists = [hit["value"] for k, hit in _cache.items() if k.startswith("city:") or k == "upcoming"]
+    for value in lists:
+        for m in (value.get("movies") if isinstance(value, dict) else value) or []:
+            if isinstance(m, dict) and str(m.get("name", "")).lower() == key and m.get("poster"):
+                return m["poster"]
+    return None
+
+
 def cinema_label(cinema, city):
     """'PVR Grand Mall, Velachery, Chennai' -> 'PVR Grand Mall, Velachery' (the city is already picked)."""
     return re.sub(rf",\s*{re.escape(city_label(city))}\s*$", "", cinema["name"], flags=re.I) or cinema["name"]

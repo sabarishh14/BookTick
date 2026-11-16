@@ -7,9 +7,9 @@ from datetime import datetime, timedelta
 
 from . import access, district, engine, seatmap, tracker
 from .config import (ADMIN_KEY, APP_NAME, APP_TAGLINE, AUTHOR_NAME, DATABASE_URL, GITHUB_AVATAR, GITHUB_URL,
-                     MAX_RANGE_DAYS, TIME_SLOTS)
-from .core import (ago, date_is_past, dates_label, fmt_clock, fmt_price, logs_for, now_ist, plural, shorten, state,
-                   task_dates, today_ist,
+                     MAX_CINEMAS_PER_WATCHER, MAX_RANGE_DAYS, TIME_SLOTS)
+from .core import (ago, date_is_past, dates_label, fmt_clock, fmt_price, formats_label, logs_for, now_ist, plural,
+                   shorten, state, task_cinemas, task_dates, today_ist,
                    task_dates_label, tasks_lock, to_int)
 
 esc = html_lib.escape
@@ -138,11 +138,6 @@ def watchers_skeleton():
             f'<div class="bt-grid">{card * 3}</div></div>')
 
 
-def cinema_skeleton():
-    return (f'<div class="bt-cinema bt-loading" aria-busy="true" aria-label="Loading cinemas">'
-            f'{skel("16px", "bt-skel-dot")}{skel("150px")}{skel("110px", "bt-skel-end")}</div>')
-
-
 def logs_skeleton():
     rows = "".join(f'<li class="bt-log-row">{skel("96px")}{skel(w)}</li>' for w in ("62%", "48%", "70%", "40%", "56%", "66%"))
     return f'<ol class="bt-log-list bt-loading" aria-busy="true" aria-label="Loading activity">{rows}</ol>'
@@ -192,7 +187,7 @@ def movie_picker_html():
     return f"""
 <div class="bt-mp">
   <span class="bt-field-label" id="bt-mp-label">Movie</span>
-  <span class="bt-field-info">Pick from what's showing or coming soon. You can pick more than one.</span>
+  <span class="bt-field-info">Pick from what's showing or coming soon. Pick more than one and each gets its own watcher.</span>
   <div class="bt-mp-picked" aria-live="polite"></div>
   <div class="bt-mp-panel" role="dialog" aria-labelledby="bt-mp-label" hidden>
     <label class="bt-mp-search">{icon("search")}<input type="search" autocomplete="off" spellcheck="false"
@@ -207,6 +202,28 @@ def movie_picker_html():
       <button type="button" class="bt-btn bt-mp-custom" hidden></button>
       <button type="button" class="bt-btn primary bt-mp-done">Done</button>
     </div>
+  </div>
+</div>"""
+
+
+def cinema_picker_html():
+    """The cinemas field: picks as chips, and a searchable list (BookTick.cinemas in app.js).
+
+    The script fills it from #bt-cinema-catalog and writes the picks into #bt-cinema-value as a
+    JSON list of cinema links, or ["city:<city>"] for anywhere in the city.
+    """
+    return f"""
+<div class="bt-cp" data-max="{MAX_CINEMAS_PER_WATCHER}">
+  <span class="bt-field-label" id="bt-cp-label">Where</span>
+  <span class="bt-field-info">Pick up to {MAX_CINEMAS_PER_WATCHER} cinemas, or anywhere in the city. Whichever opens first, you hear.</span>
+  <div class="bt-cp-picked" aria-live="polite"></div>
+  <div class="bt-cp-panel" role="dialog" aria-labelledby="bt-cp-label" hidden>
+    <label class="bt-mp-search">{icon("search")}<input type="search" autocomplete="off" spellcheck="false"
+      placeholder="Search cinemas or areas" aria-label="Search cinemas"></label>
+    <button type="button" class="bt-cp-anywhere"></button>
+    <div class="bt-cp-list" role="listbox" aria-multiselectable="true" aria-label="Cinemas"></div>
+    <div class="bt-mp-foot"><span class="bt-cp-count"></span>
+      <button type="button" class="bt-btn primary bt-cp-done">Done</button></div>
   </div>
 </div>"""
 
@@ -415,6 +432,37 @@ def place_html(task):
     return f'{icon("pin")}{inner}'
 
 
+CINEMA_STATES = {
+    "open": ("open", lambda n: f"Open · {plural(n, 'show')}"),
+    "soldout": ("soldout", lambda n: "Sold out"),
+    "waiting": ("", lambda n: "Waiting"),
+    "unchecked": ("", lambda n: "Not checked yet"),
+}
+
+
+def cinemas_html(task_id, t, live):
+    """Where a watcher looks. With several cinemas, one line each and where bookings stand there."""
+    cinemas = task_cinemas(t)
+    if len(cinemas) < 2:
+        return f'<div class="bt-card-cinema">{place_html(t)}</div>'
+    statuses = engine.cinema_statuses(task_id) if live else [
+        (engine.cinema_label(c), c["url"], None, 0) for c in cinemas]
+    rows = []
+    for name, url, status, shows in statuses:
+        tone, text = CINEMA_STATES.get(status, ("", lambda n: ""))
+        href = safe_href(url)
+        label = esc(shorten(name, 48))
+        link = f'<a href="{href}" target="_blank" rel="noopener noreferrer">{label}</a>' if href else label
+        state_html = f'<span class="bt-cstate">{esc(text(shows))}</span>' if status else ""
+        rows.append(f'<li class="{tone}"><span class="bt-cdot"></span>{link}{state_html}</li>')
+    return f'<ul class="bt-cinemas">{"".join(rows)}</ul>'
+
+
+def poster_html(name, cls="bt-card-poster"):
+    poster = safe_href(district.poster_for(name)) if name else None
+    return f'<span class="{cls}"><img src="{poster}" alt="" loading="lazy" decoding="async"></span>' if poster else ""
+
+
 def seatmap_link(task):
     """A link to the seat map taken when bookings last opened, while the image is still kept."""
     image_id = task.get("seatmap_id")
@@ -438,8 +486,7 @@ def watcher_card(task_id, t, session):
     mine = bool(t.get("owner")) and t.get("owner") == session.get("owner")  # people see their own topics
     if session.get("admin") and t.get("owner") != session.get("owner"):
         owner += " · not yours"
-    fmt = str(t.get("format_filter") or "ANY")
-    tags = [f'<span class="bt-tag">{icon("film")}{"Any format" if fmt == "ANY" else esc(fmt)}</span>',
+    tags = [f'<span class="bt-tag">{icon("film")}{esc(formats_label(t))}</span>',
             f'<span class="bt-tag">{icon("calendar")}{esc(task_dates_label(t))}</span>']
     slots = slots_label(t.get("time_slots"))
     if slots:
@@ -451,12 +498,21 @@ def watcher_card(task_id, t, session):
     if status == "Done" and t.get("booked"):
         label = "Booked"
     phase, phase_tone = PHASES.get(t.get("phase") or "waiting", PHASES["waiting"])
+    many = len(task_cinemas(t)) > 1
+    live = status in ("Active", "Paused")
+    if many and t.get("phase") == "open":
+        phase = f"Open at {len(t.get('open_places') or [])} of {len(task_cinemas(t))} cinemas"
     if status == "Done":
         phase, phase_tone = ("Stopped after you booked" if t.get("booked") else "Finished"), ""
 
     if status == "Expired":
         last_html = (f'<div class="bt-last">{icon("calendar")}<div><b>Its dates have passed</b>'
                      f'<small>It will be removed automatically after a week.</small></div></div>')
+    elif t.get("last_checked") and many:
+        # Each cinema's own state is in its line above, so this is just when they were checked.
+        rel = ago(t.get("last_checked_ts"))
+        last_html = (f'<div class="bt-last">{icon("clock")}<div><b>Checked {esc(t["last_checked"])} IST</b>'
+                     f'<small>{plural(len(task_cinemas(t)), "cinema")} · {esc(rel or "just now")}</small></div></div>')
     elif t.get("last_checked"):
         result = str(t.get("last_result") or "Checked")
         last_tone = "hot" if result.startswith("🔥") else "warn" if result.startswith("⚠") else ""
@@ -492,9 +548,12 @@ def watcher_card(task_id, t, session):
     <span class="bt-badge s-{tone}">{pulse}{label}</span>
     <span class="bt-owner">{icon("user")}{owner}</span>
   </div>
-  <div>
-    <h3 class="bt-card-title">{movie}</h3>
-    <div class="bt-card-cinema">{place_html(t)}</div>
+  <div class="bt-card-main">
+    {poster_html(t.get("movie_filter"))}
+    <div class="bt-card-what">
+      <h3 class="bt-card-title">{movie}</h3>
+      {cinemas_html(task_id, t, live)}
+    </div>
   </div>
   <div class="bt-tags">{"".join(tags)}</div>
   <div class="bt-phase {phase_tone}"><span>{esc(phase)}</span><b>{plural(sent, "alert")} sent</b></div>
@@ -661,16 +720,14 @@ def watcher_row(task_id, t, session):
     label, tone, group = STATUS_META.get(status, (status or "Unknown", "paused", "finished"))
     if status == "Done" and t.get("booked"):
         label = "Booked"
-    if t.get("scope") == "city":
-        where = f"Any cinema in {district.city_label(t.get('city'))}"
-    else:
-        where = t.get("cinema_name") or district.cinema_name_from_url(t.get("cinema_url", ""))
-    fmt = str(t.get("format_filter") or "ANY")
-    sub = " · ".join(x for x in ("Any format" if fmt == "ANY" else fmt, task_dates_label(t), shorten(where, 46)) if x)
+    where = (f"Any cinema in {district.city_label(t.get('city'))}" if t.get("scope") == "city"
+             else engine.task_place(t))
+    sub = " · ".join(x for x in (formats_label(t), task_dates_label(t), shorten(where, 46)) if x)
     sent = to_int(t.get("alert_count")) or 0
     return f"""
 <details class="bt-wrow" data-group="{group}">
   <summary>
+    {poster_html(t.get("movie_filter"), "bt-wrow-poster")}
     <span class="bt-badge s-{tone}">{label}</span>
     <span class="bt-wrow-main"><b>{esc(watcher_title(t))}</b><small>{esc(sub)}</small></span>
     <span class="bt-wrow-meta" title="Alerts sent">{icon("bell")}{sent}</span>
@@ -773,25 +830,6 @@ def show_groups(shows, matched_ids, tag="", by="title", limit=None):
     if limit is not None and len(groups) > limit:
         out.append(f'<p class="bt-more">…and {plural(len(groups) - limit, "more cinema")}.</p>')
     return "".join(out)
-
-
-def cinema_card(cinema):
-    """One line under the cinema picker: how many movies it's showing, and a link to it on District."""
-    if not cinema:
-        return ""
-    href = safe_href(cinema["url"])
-    link = (f'<a class="bt-cinema-link" href="{href}" target="_blank" rel="noopener noreferrer">'
-            f'Open on District{icon("external")}</a>') if href else ""
-    count = len(cinema["movies"])
-    showing = f"<b>{plural(count, 'movie')}</b> showing now" if count else "Nothing showing right now"
-    return f'<div class="bt-cinema">{icon("film")}<span>{showing}</span>{link}</div>'
-
-
-def city_card(city, directory):
-    """Under the cinema picker when "Any cinema" is picked."""
-    cinemas = len(directory["cinemas"]) if directory else 0
-    return (f'<div class="bt-cinema">{icon("city")}<span>Watching <b>{plural(cinemas, "cinema")}</b> in '
-            f'{esc(district.city_label(city))} for your movie</span></div>')
 
 
 # --- Settings -----------------------------------------------------------------

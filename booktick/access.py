@@ -78,20 +78,23 @@ def visible_tasks(session, kind="watcher"):
     return [(tid, t) for tid, t in items if owner and t.get("owner") == owner]
 
 
-def watcher_limit_error(session, network):
-    """Why this person can't add another watcher right now, or None."""
+def watcher_limit_error(session, network, count=1):
+    """Why this person can't add `count` more watchers (one per movie) right now, or None."""
     if session.get("admin"):
         return None
     with tasks_lock:
         open_tasks = [t for t in state["tasks"].values()
                       if t.get("status") in OPEN_STATUSES and kind_of(t) == "watcher"]
-    if len(open_tasks) >= MAX_WATCHERS_TOTAL:
+    if len(open_tasks) + count > MAX_WATCHERS_TOTAL:
         return "BookTick is watching as much as it can right now. Try again once some watchers finish."
     mine = sum(1 for t in open_tasks if t.get("owner") == session.get("owner"))
-    if mine >= MAX_WATCHERS_PER_PERSON:
-        return (f"You can have {plural(MAX_WATCHERS_PER_PERSON, 'watcher')} going at once. "
+    if mine + count > MAX_WATCHERS_PER_PERSON:
+        room = max(0, MAX_WATCHERS_PER_PERSON - mine)
+        more = (f" You have room for {plural(room, 'more watcher')}, and each movie gets its own."
+                if count > 1 and room else "")
+        return (f"You can have {plural(MAX_WATCHERS_PER_PERSON, 'watcher')} going at once.{more} "
                 "Delete one you don't need, or wait for one to finish.")
-    if network and sum(1 for t in open_tasks if t.get("network") == network) >= MAX_WATCHERS_PER_NETWORK:
+    if network and sum(1 for t in open_tasks if t.get("network") == network) + count > MAX_WATCHERS_PER_NETWORK:
         return "Too many watchers from your network right now. Delete one you don't need first."
     return None
 

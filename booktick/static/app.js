@@ -550,9 +550,16 @@ document.addEventListener("focusin", (e) => {
     if (!el) return;
     el.value = JSON.stringify(picks());
     el.dispatchEvent(new Event("input", { bubbles: true }));  // tells Gradio the value changed
+    if (BT.cinemas && BT.cinemas.refresh) BT.cinemas.refresh();  // cinemas showing these come first there
   };
   const isPicked = (name) => picks().some((p) => low(p) === low(name));
-  const isHere = (name) => !!S.cat && S.cat.here.some((h) => low(h) === low(name));
+  const hereNames = () => (BT.cinemas && BT.cinemas.movieNames ? BT.cinemas.movieNames() : null);
+  const isHere = (name) => {
+    const names = hereNames();
+    if (names) return names.has(low(name));
+    return !!S.cat && S.cat.here.some((h) => low(h) === low(name));
+  };
+  const hereLabel = () => (BT.cinemas && BT.cinemas.count && BT.cinemas.count() > 1 ? "your cinemas" : "your cinema");
   const find = (name) => {
     if (!S.cat) return null;
     const n = low(name);
@@ -572,7 +579,7 @@ document.addEventListener("focusin", (e) => {
       const hit = find(name);
       const meta = !S.cat ? "" : !hit ? "Not on District yet · watching for the name"
         : hit.kind === "soon" ? (hit.m.w === "Date TBA" ? "Coming soon · date TBA" : "Coming " + hit.m.w)
-        : isHere(name) ? "Showing at this cinema" : "Showing in the city";
+        : isHere(name) ? "Showing at " + hereLabel() : "Showing in the city";
       return '<span class="bt-mp-chip">' + poster(hit && hit.m, name) +
         '<span class="bt-mp-chip-text"><b>' + esc(name) + "</b><small>" + esc(meta) + "</small></span>" +
         '<button type="button" class="bt-mp-remove" data-mp-remove="' + esc(name) + '" aria-label="Remove ' +
@@ -604,7 +611,7 @@ document.addEventListener("focusin", (e) => {
   const card = (x) => {
     const m = x.m;
     const on = isPicked(m.n);
-    const tag = x.here ? '<span class="bt-mp-tag here">At this cinema</span>'
+    const tag = x.here ? '<span class="bt-mp-tag here">At ' + hereLabel() + "</span>"
       : x.kind === "soon" ? '<span class="bt-mp-tag">' + esc(m.w) + "</span>" : "";
     const meta = x.kind === "soon" ? (m.l || []).slice(0, 2).join(", ")
       : [(m.l || []).slice(0, 2).join(", "), m.c].filter(Boolean).join(" · ");
@@ -731,7 +738,7 @@ document.addEventListener("focusin", (e) => {
     if (t.closest(".bt-mp-done")) close(r, true);
   });
   document.addEventListener("input", (e) => {
-    const input = e.target instanceof Element ? e.target.closest(".bt-mp-search input") : null;
+    const input = e.target instanceof Element ? e.target.closest(".bt-mp .bt-mp-search input") : null;
     if (!input) return;
     S.q = input.value;
     const r = root();
@@ -742,7 +749,7 @@ document.addEventListener("focusin", (e) => {
     const r = root();
     if (!r || !r.classList.contains("is-open")) return;
     if (e.key === "Escape") { e.preventDefault(); close(r, true); return; }
-    const input = e.target instanceof Element ? e.target.closest(".bt-mp-search input") : null;
+    const input = e.target instanceof Element ? e.target.closest(".bt-mp .bt-mp-search input") : null;
     if (input && e.key === "Enter") {
       e.preventDefault();
       const shown = r.querySelectorAll(".bt-mp-card");
@@ -757,6 +764,8 @@ document.addEventListener("focusin", (e) => {
   });
 
   BT.movies = {
+    refresh: () => { render(); return []; },
+    picked: () => picks().slice(),
     load: (json) => {
       try { S.cat = JSON.parse(json || "null"); } catch (e) { S.cat = null; }
       if (S.cat) ["here", "now", "soon", "langs"].forEach((k) => { if (!Array.isArray(S.cat[k])) S.cat[k] = []; });
@@ -765,6 +774,248 @@ document.addEventListener("focusin", (e) => {
     },
   };
   // Draw the picks as soon as the field exists, before the posters arrive.
+  const wait = setInterval(() => { if (render()) clearInterval(wait); }, 200);
+  setTimeout(() => clearInterval(wait), 30000);
+})();
+
+// ---------------------------------------------------------------------------
+// Cinema picker. Python sends the city's cinemas as JSON (#bt-cinema-catalog):
+// {city, label, cinemas: [{u: link, n: name, a: area, m: [movies showing]}]}. Picks go
+// into a hidden textbox (#bt-cinema-value) as a JSON list of links, or ["city:<city>"]
+// for anywhere in the city. A pasted link arrives in #bt-cinema-add.
+// ---------------------------------------------------------------------------
+(() => {
+  const BT = window.BookTick;
+  if (!BT || BT.cinemas) return;
+  const CITY = "city:";
+  const S = { cat: null, picks: null, q: "", names: {} };
+  const root = () => document.querySelector(".bt-cp");
+  const field = () => document.querySelector("#bt-cinema-value input, #bt-cinema-value textarea");
+  const max = () => Number((root() || {}).dataset ? root().dataset.max : 5) || 5;
+  const esc = (t) => String(t == null ? "" : t).replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const svg = (d) => '<svg class="bt-i" viewBox="0 0 24 24" aria-hidden="true">' + d + "</svg>";
+  const ICON = {
+    pin: '<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/>',
+    city: '<path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4M10 10h4M10 14h4M10 18h4"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>', x: '<path d="M18 6 6 18M6 6l12 12"/>', check: '<path d="M20 6 9 17l-5-5"/>',
+  };
+  const low = (s) => String(s).toLocaleLowerCase();
+  const cid = (u) => (String(u).match(/-CD(\d+)/i) || [])[1] || String(u);
+  const slugName = (u) => {
+    const slug = String(u).split("?")[0].replace(/\/+$/, "").split("/").pop().replace(/-CD\d+$/i, "");
+    return slug.split("-").filter(Boolean).map((w) => w[0].toUpperCase() + w.slice(1)).join(" ") || "Cinema";
+  };
+
+  const picks = () => {
+    if (S.picks === null) {
+      const el = field();
+      if (!el) return [];
+      try {
+        const v = JSON.parse(el.value || "[]");
+        S.picks = Array.isArray(v) ? v.map(String).filter(Boolean) : [];
+      } catch (e) {
+        S.picks = [];
+      }
+    }
+    return S.picks;
+  };
+  const save = () => {
+    const el = field();
+    if (!el) return;
+    el.value = JSON.stringify(picks());
+    el.dispatchEvent(new Event("input", { bubbles: true }));  // tells Gradio the value changed
+    if (BT.movies && BT.movies.refresh) BT.movies.refresh();  // "At your cinema" follows these picks
+  };
+  const anywhere = () => picks().some((p) => p.startsWith(CITY));
+  const cinemaOf = (u) => (S.cat ? S.cat.cinemas.find((c) => cid(c.u) === cid(u)) : null);
+  const nameOf = (u) => { const c = cinemaOf(u); return c ? c.n : S.names[cid(u)] || slugName(u); };
+  const isPicked = (u) => picks().some((p) => !p.startsWith(CITY) && cid(p) === cid(u));
+  const movies = () => (BT.movies && BT.movies.picked ? BT.movies.picked() : []);
+  // A cinema showing one of the movies picked, by name (part of a name counts, as in watchers).
+  const showing = (c) => {
+    const wanted = movies().map(low);
+    return (c.m || []).find((m) => wanted.some((w) => low(m).includes(w) || w.includes(low(m)))) || null;
+  };
+
+  // --- The picks, as chips ------------------------------------------------------
+  const renderPicked = (r) => {
+    const list = picks();
+    const label = S.cat ? S.cat.label : "the city";
+    const chip = (icon, title, sub, value) => '<span class="bt-mp-chip bt-cp-chip"><span class="bt-cp-icon">' + svg(icon) +
+      '</span><span class="bt-mp-chip-text"><b>' + esc(title) + "</b><small>" + esc(sub) + "</small></span>" +
+      '<button type="button" class="bt-mp-remove" data-cp-remove="' + esc(value) + '" aria-label="Remove ' + esc(title) +
+      '" title="Remove">' + svg(ICON.x) + "</button></span>";
+    const chips = list.map((p) => {
+      if (p.startsWith(CITY)) return chip(ICON.city, "Anywhere in " + label, "Every cinema in the city", p);
+      const c = cinemaOf(p);
+      const sub = c ? (c.a || "In " + label) : "Pasted link";
+      return chip(ICON.pin, nameOf(p), sub, p);
+    }).join("");
+    const full = anywhere() || list.length >= max();
+    const isOpen = r.classList.contains("is-open");
+    const text = !list.length ? "Choose where" : anywhere() ? "Change" : full ? "Change cinemas" : "Add a cinema";
+    r.querySelector(".bt-cp-picked").innerHTML = chips + '<button type="button" class="bt-mp-add bt-cp-add' +
+      (list.length ? "" : " is-empty") + '" aria-expanded="' + isOpen + '">' + svg(list.length ? ICON.plus : ICON.pin) +
+      "<span>" + text + "</span></button>";
+  };
+
+  // --- The panel: anywhere in the city, then each cinema --------------------------
+  const renderPanel = (r) => {
+    const panel = r && r.querySelector(".bt-cp-panel");
+    if (!panel || panel.hidden) return;
+    const label = S.cat ? S.cat.label : "the city";
+    const any = anywhere();
+    const anyBtn = r.querySelector(".bt-cp-anywhere");
+    anyBtn.classList.toggle("is-on", any);
+    anyBtn.setAttribute("aria-pressed", String(any));
+    anyBtn.innerHTML = '<span class="bt-cp-icon">' + svg(ICON.city) + '</span><span class="bt-cp-text"><b>Anywhere in ' +
+      esc(label) + "</b><small>Every cinema in the city. You hear wherever it opens first.</small></span>" +
+      '<span class="bt-cp-check">' + svg(ICON.check) + "</span>";
+    const list = r.querySelector(".bt-cp-list");
+    if (!S.cat) {
+      list.innerHTML = '<div class="bt-mp-empty">Loading cinemas…</div>';
+    } else {
+      const q = low(S.q.trim());
+      const rows = S.cat.cinemas.filter((c) => !q || low(c.n + " " + c.a).includes(q))
+        .map((c) => ({ c, hit: showing(c) }))
+        .sort((x, y) => (y.hit ? 1 : 0) - (x.hit ? 1 : 0));  // ones showing your movie first, else A–Z as sent
+      const full = picks().filter((p) => !p.startsWith(CITY)).length >= max();
+      list.innerHTML = rows.length ? rows.map(({ c, hit }) => {
+        const on = isPicked(c.u);
+        const off = !on && (full || any);
+        const badge = hit ? '<span class="bt-cp-badge hot">Showing ' + esc(hit) + "</span>"
+          : '<span class="bt-cp-badge">' + (c.m || []).length + " movies</span>";
+        return '<button type="button" class="bt-cp-row' + (on ? " is-on" : "") + (off ? " is-full" : "") +
+          '" role="option" aria-selected="' + on + '" data-cp-cinema="' + esc(c.u) + '"' + (off && !any ? ' title="Up to ' +
+          max() + ' cinemas"' : "") + '><span class="bt-cp-check">' + svg(ICON.check) + '</span><span class="bt-cp-text"><b>' +
+          esc(c.n) + "</b><small>" + esc(c.a || label) + (hit ? '<em class="bt-cp-hit"> · Showing ' + esc(hit) + "</em>" : "") +
+          "</small></span>" + badge + "</button>";
+      }).join("") : '<div class="bt-mp-empty">No cinema called “' + esc(S.q.trim()) + "” in " + esc(label) +
+        ". You can paste its link from district.in below.</div>";
+    }
+    const n = picks().filter((p) => !p.startsWith(CITY)).length;
+    r.querySelector(".bt-cp-count").textContent = any ? "Watching the whole city"
+      : n ? n + " of " + max() + " cinemas picked" : "Pick up to " + max() + " cinemas";
+  };
+  const render = () => {
+    const r = root();
+    if (!r || !field()) return false;
+    renderPicked(r);
+    renderPanel(r);
+    return true;
+  };
+
+  const open = (r) => {
+    r.querySelector(".bt-cp-panel").hidden = false;
+    r.classList.add("is-open");
+    render();
+    const input = r.querySelector(".bt-mp-search input");
+    if (input && window.matchMedia("(pointer: fine)").matches) input.focus({ preventScroll: true });
+  };
+  const close = (r, refocus) => {
+    const panel = r.querySelector(".bt-cp-panel");
+    if (!panel || panel.hidden) return;
+    panel.hidden = true;
+    r.classList.remove("is-open");
+    renderPicked(r);
+    if (refocus) { const add = r.querySelector(".bt-cp-add"); if (add) add.focus(); }
+  };
+  const toggleCinema = (u) => {
+    const list = picks();
+    const i = list.findIndex((p) => !p.startsWith(CITY) && cid(p) === cid(u));
+    if (i >= 0) list.splice(i, 1);
+    else if (!anywhere() && list.length < max()) list.push(u);
+    else return false;
+    save();
+    return true;
+  };
+
+  document.addEventListener("click", (e) => {
+    const t = e.target instanceof Element ? e.target : null;
+    const r = root();
+    if (!t || !r || !t.isConnected) return;
+    if (!r.contains(t)) { close(r, false); return; }
+    if (t.closest(".bt-cp-add")) { if (r.classList.contains("is-open")) close(r, false); else open(r); return; }
+    const rm = t.closest("[data-cp-remove]");
+    if (rm) {
+      const v = rm.getAttribute("data-cp-remove");
+      S.picks = picks().filter((p) => p !== v);
+      save();
+      render();
+      return;
+    }
+    if (t.closest(".bt-cp-anywhere")) {
+      S.picks = anywhere() || !S.cat ? [] : [CITY + S.cat.city];
+      save();
+      render();
+      return;
+    }
+    const row = t.closest("[data-cp-cinema]");
+    if (row) {
+      if (toggleCinema(row.getAttribute("data-cp-cinema"))) render();
+      return;
+    }
+    if (t.closest(".bt-cp-done")) close(r, true);
+  });
+  document.addEventListener("input", (e) => {
+    const input = e.target instanceof Element ? e.target.closest(".bt-cp .bt-mp-search input") : null;
+    if (!input) return;
+    S.q = input.value;
+    renderPanel(root());
+    root().querySelector(".bt-cp-list").scrollTop = 0;
+  });
+  document.addEventListener("keydown", (e) => {
+    const r = root();
+    if (!r || !r.classList.contains("is-open")) return;
+    if (e.key === "Escape") { e.preventDefault(); close(r, true); return; }
+    const input = e.target instanceof Element ? e.target.closest(".bt-cp .bt-mp-search input") : null;
+    if (input && e.key === "Enter") {
+      e.preventDefault();
+      const rows = r.querySelectorAll(".bt-cp-row:not(.is-full)");
+      if (rows.length === 1) rows[0].click();
+    }
+  });
+  document.addEventListener("focusin", (e) => {
+    const r = root();
+    if (r && r.classList.contains("is-open") && e.target instanceof Element && !r.contains(e.target)) close(r, false);
+  });
+
+  BT.cinemas = {
+    load: (json) => {
+      let next = null;
+      try { next = JSON.parse(json || "null"); } catch (e) { next = null; }
+      if (next && !Array.isArray(next.cinemas)) next.cinemas = [];
+      // A different city: the cinemas picked in the last one don't carry over.
+      if (next && S.cat && S.cat.city !== next.city && picks().length) { S.picks = []; save(); }
+      S.cat = next;
+      if (!render()) setTimeout(() => BT.cinemas.load(json), 200);
+      if (BT.movies && BT.movies.refresh) BT.movies.refresh();
+      return [];
+    },
+    // A pasted link (from Python): add it to the picks.
+    add: (json) => {
+      let c = null;
+      try { c = JSON.parse(json || "null"); } catch (e) { c = null; }
+      if (!c || !c.u) return [];
+      S.names[cid(c.u)] = c.n;
+      if (anywhere()) S.picks = [];
+      if (!isPicked(c.u) && picks().length < max()) { picks().push(c.u); save(); }
+      render();
+      return [];
+    },
+    refresh: () => { render(); return []; },
+    // For the movie picker: the movies showing at the cinemas picked (null for anywhere or none).
+    movieNames: () => {
+      if (!S.cat || anywhere()) return null;
+      const list = picks();
+      if (!list.length) return null;
+      const names = new Set();
+      list.forEach((p) => { const c = cinemaOf(p); (c ? c.m || [] : []).forEach((m) => names.add(low(m))); });
+      return names;
+    },
+    count: () => (anywhere() ? 0 : picks().length),
+  };
   const wait = setInterval(() => { if (render()) clearInterval(wait); }, 200);
   setTimeout(() => clearInterval(wait), 30000);
 })();

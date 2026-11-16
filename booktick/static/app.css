@@ -573,15 +573,15 @@ a.bt-show:hover { border-color: var(--bt-brand); transform: translateY(-1px); bo
 .bt-day.is-range-start { border-radius: 8px 0 0 8px; }
 .bt-day.is-range-end { border-radius: 0 8px 8px 0; }
 
-/* ---------- show-time chips (a Gradio CheckboxGroup) ---------- */
-#bt-slots .wrap { gap: 8px !important; }
-#bt-slots label { margin: 0 !important; padding: 8px 14px !important; border: 1px solid var(--input-border-color) !important;
+/* ---------- show-time and format chips (Gradio CheckboxGroups) ---------- */
+#bt-slots .wrap, #bt-formats .wrap { gap: 8px !important; }
+#bt-slots label, #bt-formats label { margin: 0 !important; padding: 8px 14px !important; border: 1px solid var(--input-border-color) !important;
   border-radius: 999px !important; background: var(--input-background-fill) !important; box-shadow: none !important;
   font-size: .86rem !important; font-weight: 500; cursor: pointer; transition: border-color .15s, background .15s, color .15s; }
-#bt-slots label:hover { border-color: var(--input-border-color-hover) !important; }
-#bt-slots label.selected { border-color: var(--bt-brand) !important; background: color-mix(in srgb, var(--bt-brand) 8%, transparent) !important;
+#bt-slots label:hover, #bt-formats label:hover { border-color: var(--input-border-color-hover) !important; }
+#bt-slots label.selected, #bt-formats label.selected { border-color: var(--bt-brand) !important; background: color-mix(in srgb, var(--bt-brand) 8%, transparent) !important;
   color: var(--bt-brand); }
-#bt-slots input[type="checkbox"] { display: none; }
+#bt-slots input[type="checkbox"], #bt-formats input[type="checkbox"] { display: none; }
 
 /* ---------- city-wide preview ---------- */
 .bt-more { margin: 0 !important; font-size: .84rem; color: var(--bt-muted); }
@@ -696,7 +696,7 @@ a.bt-btn { text-decoration: none !important; }
 .bt-mp-chip .bt-mp-poster { width: 36px; height: 54px; flex: none; border-radius: 9px; }
 .bt-mp-chip .bt-mp-poster::before { font-size: .95rem; }
 .bt-mp-chip-text { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
-.bt-mp-chip-text b { max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .92rem;
+.bt-mp-chip-text b { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .92rem;
   font-weight: 700; color: var(--bt-text); }
 .bt-mp-chip-text small { font-size: .75rem; color: var(--bt-muted); }
 .bt-mp-remove { width: 30px; height: 30px; flex: none; display: grid; place-items: center; margin: 0 !important; padding: 0 !important;
@@ -790,3 +790,71 @@ a.bt-btn { text-decoration: none !important; }
 .bt-mp-add:focus { outline: none !important; }
 .bt-mp-add:focus-visible, .bt-mp-remove:focus-visible, .bt-mp-tabs button:focus-visible, .bt-mp-langs button:focus-visible {
   outline: none !important; box-shadow: 0 0 0 3px var(--bt-hot-bg), 0 0 0 1px var(--bt-brand) !important; }
+
+/* ---------- cinema picker: picks as chips, a searchable list ---------- */
+.bt-cp { display: flex; flex-direction: column; gap: 2px; }
+.bt-cp-picked { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.bt-cp-chip { padding-left: 6px; }
+.bt-cp-icon { width: 38px; height: 38px; flex: none; display: grid; place-items: center; border-radius: 11px;
+  background: var(--bt-hot-bg); color: var(--bt-brand); }
+.bt-cp-icon .bt-i { font-size: 18px; }
+.bt-cp-add { min-height: 52px; }
+.bt-cp-panel { margin-top: 10px; padding: 12px; border-radius: 18px; background: var(--bt-surface); border: 1px solid var(--bt-line);
+  box-shadow: var(--bt-pop-shadow); animation: bt-mp-in .16s ease-out; }
+.bt-cp-panel[hidden] { display: none !important; }
+.bt-cp-anywhere { display: flex; align-items: center; gap: 12px; width: 100%; margin: 10px 0 0 !important; padding: 10px 12px !important;
+  border: 1px solid var(--bt-line) !important; border-radius: 14px !important; background: var(--bt-surface-2) !important;
+  color: var(--bt-text); font: inherit; text-align: left; cursor: pointer; transition: border-color .15s, background .15s; }
+.bt-cp-anywhere:hover { border-color: var(--bt-muted) !important; }
+.bt-cp-anywhere.is-on { border-color: var(--bt-brand) !important; background: var(--bt-hot-bg) !important; }
+.bt-cp-list { display: flex; flex-direction: column; gap: 2px; max-height: 360px; margin-top: 8px; padding: 2px; overflow-y: auto;
+  overscroll-behavior: contain; scrollbar-width: thin; }
+.bt-cp-row { display: flex; align-items: center; gap: 12px; width: 100%; margin: 0 !important; padding: 9px 10px !important;
+  border: none !important; border-radius: 12px !important; background: transparent !important; color: var(--bt-text); font: inherit;
+  text-align: left; cursor: pointer; transition: background .12s; }
+.bt-cp-row:hover { background: var(--bt-hover) !important; }
+.bt-cp-row.is-on { background: var(--bt-hot-bg) !important; }
+.bt-cp-row.is-full { opacity: .45; cursor: not-allowed; }
+.bt-cp-row:focus-visible, .bt-cp-anywhere:focus-visible { outline: none !important; box-shadow: 0 0 0 2px var(--bt-brand) !important; }
+.bt-cp-check { width: 22px; height: 22px; flex: none; display: grid; place-items: center; border-radius: 7px;
+  border: 1.5px solid var(--bt-line); color: transparent; transition: background .12s, border-color .12s; }
+.bt-cp-check .bt-i { font-size: 14px; stroke-width: 3; opacity: 0; transition: opacity .12s; }
+.bt-cp-row.is-on .bt-cp-check .bt-i, .bt-cp-anywhere.is-on .bt-cp-check .bt-i { opacity: 1; }
+.bt-cp-hit { display: none; font-style: normal; color: var(--bt-ok); font-weight: 650; }
+.bt-cp-row.is-on .bt-cp-check, .bt-cp-anywhere.is-on .bt-cp-check { background: var(--bt-brand); border-color: var(--bt-brand); color: #fff; }
+.bt-cp-anywhere .bt-cp-check { border-radius: 50%; }
+.bt-cp-text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.bt-cp-text b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .92rem; font-weight: 650; }
+.bt-cp-text small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .76rem; color: var(--bt-muted); }
+.bt-cp-badge { flex: none; max-width: 42%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 3px 9px;
+  border-radius: 999px; background: var(--bt-surface-2); color: var(--bt-muted); font-size: .72rem; font-weight: 650; }
+.bt-cp-badge.hot { background: var(--bt-ok-bg); color: var(--bt-ok); }
+.bt-cp-count { margin-right: auto; font-size: .82rem; color: var(--bt-muted); }
+#bt-cinema-info:empty, #bt-cinema-info .prose:empty { display: none; }
+
+/* ---------- watcher card: poster, and each cinema with where bookings stand ---------- */
+.bt-card-main { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
+.bt-card-what { flex: 1; min-width: 0; }
+.bt-card-poster { width: 46px; flex: none; aspect-ratio: 2 / 3; overflow: hidden; border-radius: 9px; background: var(--bt-surface-2);
+  box-shadow: 0 2px 8px rgba(18, 19, 42, .14); }
+.bt-card-poster img, .bt-wrow-poster img { width: 100%; height: 100%; object-fit: cover; margin: 0; display: block; }
+.bt-cinemas { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 0 !important; padding: 0 !important; list-style: none !important; }
+.bt-cinemas li { display: flex; align-items: center; gap: 8px; min-width: 0; margin: 0 !important; padding: 0 !important; font-size: .84rem; }
+.bt-cinemas li::marker { content: none; }
+.bt-cinemas a { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--bt-text) !important;
+  text-decoration: none !important; }
+.bt-cinemas a:hover { text-decoration: underline !important; }
+.bt-cdot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--bt-line); }
+.bt-cinemas li.open .bt-cdot { background: var(--bt-ok); box-shadow: 0 0 0 3px var(--bt-ok-bg); }
+.bt-cinemas li.soldout .bt-cdot { background: var(--bt-warn); }
+.bt-cstate { flex: none; font-size: .74rem; font-weight: 650; color: var(--bt-muted); }
+.bt-cinemas li.open .bt-cstate { color: var(--bt-ok); }
+.bt-cinemas li.soldout .bt-cstate { color: var(--bt-warn); }
+.bt-wrow-poster { width: 30px; flex: none; aspect-ratio: 2 / 3; overflow: hidden; border-radius: 6px; background: var(--bt-surface-2); }
+@media (max-width: 640px) {
+  .bt-cp-panel { padding: 10px; border-radius: 16px; }
+  .bt-cp-list { max-height: 55vh; }
+  .bt-cp-chip { flex: 1 1 100%; }
+  .bt-cp-badge { display: none; }
+  .bt-cp-hit { display: inline; }
+}

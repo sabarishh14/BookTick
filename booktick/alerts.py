@@ -8,7 +8,7 @@ import requests
 
 from .actions import action_url
 from .config import APP_NAME, BRAND_DISCORD_COLOR
-from .core import fmt_price, fmt_when, now_ist, plural, redact, seats_text, shorten
+from .core import fmt_price, fmt_when, now_ist, plural, redact, seats_text, shorten, task_cinemas
 from .district import query_url
 
 
@@ -52,6 +52,7 @@ BUTTONS = {
     "reopened": [("Booked it, stop watching", "stop"), ("Got it, keep watching", "keep")],
     "reminder": [("Booked it, stop watching", "stop"), ("Got it, keep watching", "keep")],
     "more_seats": [("Booked it, stop watching", "stop")],
+    "also_open": [("Booked it, stop watching", "stop"), ("Got it, keep watching", "keep")],
     "closed": [("Yes, booked. Stop watching", "stop"), ("Not yet, keep watching", "keep")],
 }
 
@@ -65,6 +66,8 @@ def wording(kind, name, shows, count, max_alerts, reason):
         return f"🚨 [{count}/{max_alerts}] Still open: {name}", f"{n} still have seats."
     if kind == "more_seats":
         return f"🎟️ More seats: {name}", "Seats just freed up in these shows:"
+    if kind == "also_open":
+        return f"🚨 Now also open: {name}", f"Bookings opened at another of your cinemas. {n} with seats right now."
     if kind == "closed":
         why = ("Every matching show is sold out right now." if reason == "sold_out"
                else "The shows have been taken off sale for now.")
@@ -90,8 +93,8 @@ def send_task_notification(task, shows, place, kind="opened", count=1, max_alert
     lines = show_lines(shows)
     if shows:
         links = alert_links(shows[0])
-    elif task.get("cinema_url"):
-        links = [("Open cinema", query_url(task["cinema_url"], date))]
+    elif task_cinemas(task):
+        links = [("Open cinema", query_url(task_cinemas(task)[0]["url"], date))]
     else:
         links = []
     open_link = links[0][1] if links else None

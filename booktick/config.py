@@ -60,7 +60,10 @@ PREVIEW_CACHE = 15            # seconds a preview reuses a page it just fetched
 DEFAULT_URL = "https://www.district.in/movies/inox-phoenix-market-city-formerly-jazz-cinemas-velachery-chennai-CD1020779"
 DEFAULT_CITY = "chennai"
 DEFAULT_CINEMA_LABEL = "INOX Phoenix Market City (formerly Jazz Cinemas), Velachery"
-FORMAT_CHOICES = ["ANY", "IMAX", "4DX", "3D", "2D"]
+FORMAT_CHOICES = ["ANY", "IMAX", "4DX", "3D", "2D"]       # the seat tracker's format list
+FORMAT_CHIPS = ["IMAX", "4DX", "Dolby", "ICE", "ScreenX", "3D", "2D"]  # a watcher's formats (none ticked = any)
+MAX_CINEMAS_PER_WATCHER = 5   # cinemas one watcher can follow…
+MAX_CINEMA_DAYS = 15          # …and cinemas × days, since each is a page checked every few seconds
 # (key, label, from hour, to hour). Hours past 24 run into the next morning, so a
 # 1 AM show counts as Night.
 TIME_SLOTS = [

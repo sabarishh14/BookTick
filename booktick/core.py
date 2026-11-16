@@ -127,16 +127,23 @@ def fmt_price(price):
     return f"₹{price:.0f}" if float(price).is_integer() else f"₹{price:.2f}"
 
 
-def movie_text(value):
-    """The movie picker sends a JSON list of names; watchers store them comma-separated."""
+def movie_list(value):
+    """The movies picked: the movie picker sends a JSON list of names (plain text works too)."""
     if isinstance(value, str) and value.strip().startswith("["):
         try:
             value = json.loads(value)
         except ValueError:
             pass
     if isinstance(value, (list, tuple)):
-        return ", ".join(str(v).strip() for v in value if str(v).strip())
-    return str(value or "").strip()
+        names = [str(v).strip() for v in value]
+    else:
+        names = [str(value or "").strip()]
+    return list(dict.fromkeys(n for n in names if n))
+
+
+def movie_text(value):
+    """The movies picked, comma-separated (how a watcher's movie keywords are stored)."""
+    return ", ".join(movie_list(value))
 
 
 def shorten(text, limit):
@@ -227,6 +234,36 @@ def dates_label(start, end=None):
         return date_label(start)
     left = a.strftime("%a %d") if (a.year, a.month) == (b.year, b.month) else a.strftime("%a %d %b")
     return f"{left} – {b.strftime('%a %d %b')} · {(b - a).days + 1} days"
+
+
+# ---------------------------------------------------------------------------
+# Where and how a watcher looks. A watcher follows one movie at up to a few cinemas
+# ("cinemas": [{"url", "name"}]) in any of a few formats ("formats": ["IMAX", "4DX"]).
+# Watchers saved before that have one "cinema_url"/"cinema_name" and one "format_filter";
+# these read both.
+# ---------------------------------------------------------------------------
+def task_cinemas(task):
+    """[{"url", "name"}, ...] for a watcher on cinemas; [] for one on a whole city."""
+    if task.get("scope") == "city":
+        return []
+    if task.get("cinemas"):
+        return [c for c in task["cinemas"] if isinstance(c, dict) and c.get("url")]
+    if task.get("cinema_url"):
+        return [{"url": task["cinema_url"], "name": task.get("cinema_name")}]
+    return []
+
+
+def task_formats(task):
+    """The formats a watcher wants, upper-case, or [] for any format."""
+    if isinstance(task.get("formats"), list):
+        return [str(f).strip().upper() for f in task["formats"] if str(f).strip()]
+    fmt = str(task.get("format_filter") or "ANY").strip().upper()
+    return [] if fmt in ("", "ANY") else [fmt]
+
+
+def formats_label(task):
+    formats = task_formats(task)
+    return ", ".join(formats) if formats else "Any format"
 
 
 def task_dates_label(task):
