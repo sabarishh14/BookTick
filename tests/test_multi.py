@@ -202,6 +202,72 @@ class AnywhereAndCinemas(unittest.TestCase):
         self.assertIn("each of these opens", card)
 
 
+def at(cinema, cid, n=1, avail=10):
+    """A show on a city page, which links its cinema."""
+    return dict(show(cinema, n=n, avail=avail), cinema_url=f"https://www.district.in/movies/{cinema.lower()}-CD{cid}")
+
+
+class AcrossTheCity(unittest.TestCase):
+    """Anywhere in the city: after the first alert, the cinemas that open next are named."""
+
+    def setUp(self):
+        self.task = watcher(scope="city", city="chennai", cinemas=[], max_alerts=1)
+        state["tasks"] = {"w1": self.task}
+        engine._results.clear()
+        self.send = mock.patch("booktick.engine.send_task_notification", return_value=[]).start()
+        mock.patch("booktick.engine.save_tasks").start()
+        mock.patch("booktick.engine.request_seatmap").start()
+        listing = {"value": {"movies": [{"name": "Avengers: Doomsday", "url": MOVIE}]}, "age": 0}
+        mock.patch("booktick.engine.district.peek", return_value=listing).start()
+        engine.plan([self.task], today_ist())
+        self.page = engine.district.city_movie_url(MOVIE, "chennai", today_ist())
+
+    def tearDown(self):
+        mock.patch.stopall()
+        state["tasks"] = {}
+
+    def check(self, *shows):
+        engine.check_task(self.task, self.page, today_ist(), "Cinemas in Chennai", list(shows))
+
+    def wait(self):
+        self.task["last_spread_ts"] -= engine.CITY_SPREAD_GAP  # as if a few minutes went by
+
+    def kinds(self):
+        return [c.kwargs["kind"] for c in self.send.call_args_list]
+
+    def test_the_next_cinemas_to_open_are_named_together(self):
+        self.check(at("Kasi", 1))
+        self.assertEqual(self.kinds(), ["opened"])
+        self.check(at("Kasi", 1), at("AGS", 2))
+        self.check(at("Kasi", 1), at("AGS", 2), at("Rohini", 3), at("Rohini", 3, n=2))
+        self.assertEqual(self.kinds(), ["opened"])  # opened a moment ago: these wait, and no "more seats" either
+        self.wait()
+        self.check(at("Kasi", 1), at("AGS", 2), at("Rohini", 3), at("Rohini", 3, n=2))
+        self.assertEqual(self.kinds(), ["opened", "spread"])
+        self.assertEqual(self.send.call_args.args[2], "AGS and 1 more cinema")
+        self.assertEqual(len(self.send.call_args.args[1]), 3)  # their shows only, not Kasi's
+        self.wait()
+        self.check(at("Kasi", 1), at("AGS", 2), at("Rohini", 3))
+        self.assertEqual(self.kinds(), ["opened", "spread"])  # each cinema once
+
+    def test_watchers_open_from_before_dont_repeat_whats_open(self):
+        self.task.update(phase="open", reminders_left=0)
+        self.check(at("Kasi", 1), at("AGS", 2))
+        self.assertEqual(self.kinds(), [])
+        self.task["told_quiet_until"] = 0
+        self.check(at("Kasi", 1), at("AGS", 2), at("Rohini", 3))
+        self.assertEqual(self.kinds(), ["spread"])
+        self.assertEqual(self.send.call_args.args[2], "Rohini")
+
+    def test_its_own_cinemas_arent_named_twice(self):
+        self.task["cinemas"] = [{"url": "https://www.district.in/movies/ags-CD2", "name": "AGS"}]
+        engine.plan([self.task], today_ist())
+        self.check(at("Kasi", 1))
+        self.wait()
+        self.check(at("Kasi", 1), at("AGS", 2))  # AGS has its own alert, from its own page
+        self.assertEqual(self.kinds(), ["opened"])
+
+
 class Cards(unittest.TestCase):
     def setUp(self):
         state["tasks"] = {"w1": watcher(last_checked="10:00:00", last_checked_ts=1)}

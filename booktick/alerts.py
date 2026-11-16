@@ -53,6 +53,7 @@ BUTTONS = {
     "reminder": [("Booked it, stop watching", "stop"), ("Got it, keep watching", "keep")],
     "more_seats": [("Booked it, stop watching", "stop")],
     "also_open": [("Booked it, stop watching", "stop"), ("Got it, keep watching", "keep")],
+    "spread": [("Booked it, stop watching", "stop"), ("Got it, keep watching", "keep")],
     "closed": [("Yes, booked. Stop watching", "stop"), ("Not yet, keep watching", "keep")],
 }
 
@@ -68,6 +69,8 @@ def wording(kind, name, shows, count, max_alerts, reason):
         return f"🎟️ More seats: {name}", "Seats just freed up in these shows:"
     if kind == "also_open":
         return f"🚨 Now also open: {name}", f"Bookings just opened at one of your cinemas. {n} with seats right now."
+    if kind == "spread":
+        return f"🚨 Open at more cinemas: {name}", f"Bookings just opened at more cinemas in the city. {n} with seats right now."
     if kind == "closed":
         why = ("Every matching show is sold out right now." if reason == "sold_out"
                else "The shows have been taken off sale for now.")
@@ -80,7 +83,8 @@ def send_task_notification(task, shows, place, kind="opened", count=1, max_alert
     """Send one alert to every channel on the task. Returns [(channel, ok, detail), ...].
 
     `place` is the cinema, or "Cinemas in <city>". `kind` is opened, reopened, reminder,
-    more_seats or closed; a closed alert may have no shows (when they were taken off sale).
+    more_seats, also_open (another of its cinemas), spread (more cinemas across a city) or
+    closed; a closed alert may have no shows (when they were taken off sale).
     """
     titles = list(dict.fromkeys(s["title"] for s in shows)) or [task.get("movie_filter") or "your movie"]
     name = " / ".join(titles)

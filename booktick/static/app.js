@@ -884,7 +884,7 @@ document.addEventListener("focusin", (e) => {
     anyBtn.setAttribute("aria-pressed", String(any));
     anyBtn.innerHTML = '<span class="bt-cp-icon">' + svg(ICON.city) + '</span><span class="bt-cp-text"><b>Anywhere in ' +
       esc(label) + "</b><small>" + (any ? "Every cinema in the city. Tick cinemas below to hear about each of them too."
-        : "Every cinema in the city. You hear wherever it opens first.") + "</small></span>" +
+        : "Every cinema in the city. You hear where it opens first, then as more cinemas open.") + "</small></span>" +
       '<span class="bt-cp-check">' + svg(ICON.check) + "</span>";
     const list = r.querySelector(".bt-cp-list");
     if (!S.cat) {

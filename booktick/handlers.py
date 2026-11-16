@@ -473,7 +473,8 @@ def rearm_watcher(task):
         return False, "This watcher's dates have passed. Create a new one instead."
     task.update(alert_count=0, status="Active", phase="waiting", reminders_left=0, booked=False, last_result="",
                 last_checked="", last_checked_ts=None, last_alert_ts=0)
-    task.pop("page_seats", None)  # start fresh, so bookings that are open now alert again
+    for key in ("page_seats", "told_cinemas", "told_quiet_until"):
+        task.pop(key, None)  # start fresh, so bookings that are open now alert again
     add_log(f"🔄 [{task.get('user_label')}] re-armed: alert count reset and watching again.", (task.get("owner"),))
     return True, f"Re-armed the {watcher_title(task)} watcher. It's watching again."
 
