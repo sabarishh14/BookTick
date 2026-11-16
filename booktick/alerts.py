@@ -67,7 +67,7 @@ def wording(kind, name, shows, count, max_alerts, reason):
     if kind == "more_seats":
         return f"🎟️ More seats: {name}", "Seats just freed up in these shows:"
     if kind == "also_open":
-        return f"🚨 Now also open: {name}", f"Bookings opened at another of your cinemas. {n} with seats right now."
+        return f"🚨 Now also open: {name}", f"Bookings just opened at one of your cinemas. {n} with seats right now."
     if kind == "closed":
         why = ("Every matching show is sold out right now." if reason == "sold_out"
                else "The shows have been taken off sale for now.")
@@ -93,7 +93,7 @@ def send_task_notification(task, shows, place, kind="opened", count=1, max_alert
     lines = show_lines(shows)
     if shows:
         links = alert_links(shows[0])
-    elif task_cinemas(task):
+    elif task_cinemas(task) and task.get("scope") != "city":
         links = [("Open cinema", query_url(task_cinemas(task)[0]["url"], date))]
     else:
         links = []

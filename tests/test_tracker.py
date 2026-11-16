@@ -311,7 +311,8 @@ class Engine(Base):
         with mock.patch("booktick.engine.district.fetch_shows", return_value=("PVR", shows)), \
                 mock.patch("booktick.engine.tracker.observe") as observe, \
                 mock.patch("booktick.engine.check_task") as check:
-            engine.run_page("p", {"kind": "cinema", "date": today_ist(), "tasks": [self.task]})
+            # The shows' own day: late at night, an hour from now is tomorrow.
+            engine.run_page("p", {"kind": "cinema", "date": str(shows[0]["start"].date()), "tasks": [self.task]})
         check.assert_not_called()
         self.assertEqual([s["format"] for s in observe.call_args.args[2]], ["IMAX 2D"])  # only matching shows
 

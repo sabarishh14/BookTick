@@ -13,7 +13,8 @@ GUIDE_HTML = f"""
       tap <b>Watch for it anyway</b>.</li>
     <li><b>Where.</b> Pick up to {MAX_CINEMAS_PER_WATCHER} cinemas in your city, and you hear from whichever opens first
       (then again if another one opens). Or pick <b>Anywhere in &lt;city&gt;</b> to hear the moment it opens at any
-      cinema there. A cinema that isn't listed? Paste its link from district.in under <b>Or paste a cinema link</b>.</li>
+      cinema there. Pick both, and you hear the moment it opens anywhere, then again when each of your cinemas
+      opens. A cinema that isn't listed? Paste its link from district.in under <b>Or paste a cinema link</b>.</li>
     <li><b>Format.</b> Tick the ones you'd watch, like IMAX and 4DX, or leave them all unticked for any format.</li>
     <li><b>Show date.</b> One day, or up to {MAX_RANGE_DAYS} in a row with <b>A few days</b>. Times are Indian Standard Time.</li>
     <li><b>Show time.</b> Tick morning, afternoon, evening or night, or leave them all unticked for any time.</li>

@@ -41,6 +41,8 @@ class Fields(unittest.TestCase):
         self.assertEqual(task_formats(old), ["IMAX"])
         self.assertEqual(task_formats({"format_filter": "ANY"}), [])
         self.assertEqual(task_cinemas({"scope": "city", "city": "chennai"}), [])
+        self.assertEqual(task_cinemas({"scope": "city", "city": "chennai", "cinema_url": PVR}), [])  # old city watchers
+        self.assertEqual(task_cinemas({"scope": "city", "cinemas": [{"url": PVR, "name": "PVR"}]}), [{"url": PVR, "name": "PVR"}])
 
     def test_formats_any_of(self):
         self.assertTrue(engine.show_matches(show("PVR", "4DX 3D"), [], ["IMAX", "4DX"]))
@@ -134,6 +136,72 @@ class Checking(unittest.TestCase):
         self.assertEqual(self.kinds(), ["opened"])
 
 
+MOVIE = "https://www.district.in/movies/avengers-doomsday-movie-tickets-MV123"
+
+
+class AnywhereAndCinemas(unittest.TestCase):
+    """Anywhere in the city, plus a couple of cinemas that each get their own alert."""
+
+    def setUp(self):
+        self.task = watcher(scope="city", city="chennai", cinemas=[{"url": PVR, "name": "PVR Palazzo"},
+                                                                   {"url": INOX, "name": "INOX Velachery"}])
+        state["tasks"] = {"w1": self.task}
+        engine._results.clear()
+        self.send = mock.patch("booktick.engine.send_task_notification", return_value=[]).start()
+        mock.patch("booktick.engine.save_tasks").start()
+        mock.patch("booktick.engine.request_seatmap").start()
+        listing = {"value": {"movies": [{"name": "Avengers: Doomsday", "url": MOVIE}]}, "age": 0}
+        mock.patch("booktick.engine.district.peek", return_value=listing).start()
+        engine.plan([self.task], today_ist())
+        self.city_page = engine.district.city_movie_url(MOVIE, "chennai", today_ist())
+        self.pages = {c["url"]: engine.district.query_url(c["url"], today_ist()) for c in self.task["cinemas"]}
+
+    def tearDown(self):
+        mock.patch.stopall()
+        state["tasks"] = {}
+
+    def kinds(self):
+        return [c.kwargs["kind"] for c in self.send.call_args_list]
+
+    def test_checks_the_city_and_each_cinema(self):
+        kinds = sorted(kind for kind, _, _ in engine.page_jobs(self.task, today_ist()))
+        self.assertEqual(kinds, ["cinema", "cinema", "city"])
+        self.assertEqual(len(self.task["expected_pages"]), 3)
+
+    def test_opens_anywhere_then_says_when_a_cinema_of_yours_opens(self):
+        engine.check_task(self.task, self.city_page, today_ist(), "Cinemas in Chennai", [show("Kasi")])
+        self.assertEqual(self.kinds(), ["opened"])
+        self.assertEqual(self.send.call_args.args[2], "Cinemas in Chennai")
+        engine.check_task(self.task, self.pages[PVR], today_ist(), "PVR Palazzo", [])
+        engine.check_task(self.task, self.pages[INOX], today_ist(), "INOX Velachery", [show("INOX")])
+        self.assertEqual(self.kinds(), ["opened", "also_open"])
+        self.assertEqual(self.send.call_args.args[2], "INOX Velachery")
+        engine.check_task(self.task, self.pages[PVR], today_ist(), "PVR Palazzo", [show("PVR")])
+        self.assertEqual(self.kinds(), ["opened", "also_open", "also_open"])  # each cinema gets its own
+        self.assertEqual(self.send.call_args.args[2], "PVR Palazzo")
+
+    def test_a_cinema_of_yours_opening_first_is_named(self):
+        engine.check_task(self.task, self.pages[PVR], today_ist(), "PVR Palazzo", [show("PVR")])
+        self.assertEqual(self.kinds(), ["opened"])
+        self.assertEqual(self.send.call_args.args[2], "PVR Palazzo")
+
+    def test_two_movies_with_the_name_add_up_on_the_card(self):
+        other = engine.district.city_movie_url(MOVIE.replace("MV123", "MV456"), "chennai", today_ist())
+        self.task["expected_pages"] = self.task["expected_pages"] + [other]
+        engine.check_task(self.task, self.city_page, today_ist(), "Cinemas in Chennai", [show("Kasi"), show("AGS", n=2)])
+        engine.check_task(self.task, other, today_ist(), "Cinemas in Chennai", [])
+        self.assertEqual(self.task["last_result"], "🔥 2 shows open")  # not the empty page checked last
+
+    def test_the_card_keeps_the_citys_result(self):
+        engine.check_task(self.task, self.city_page, today_ist(), "Cinemas in Chennai", [show("Kasi", avail=0)])
+        engine.check_task(self.task, self.pages[PVR], today_ist(), "PVR Palazzo", [])
+        self.assertTrue(self.task["last_result"].startswith("Sold out"))
+        card = views.watcher_card("w1", self.task, {"owner": "o"})
+        self.assertIn("Any cinema in Chennai", card)
+        self.assertEqual(card.count("<li"), 2)
+        self.assertIn("each of these opens", card)
+
+
 class Cards(unittest.TestCase):
     def setUp(self):
         state["tasks"] = {"w1": watcher(last_checked="10:00:00", last_checked_ts=1)}
@@ -193,6 +261,12 @@ class NewWatchers(unittest.TestCase):
         self.add(["city:chennai"], ["Avengers: Doomsday"])
         task = next(iter(state["tasks"].values()))
         self.assertEqual((task["scope"], task["city"], task["cinemas"]), ("city", "chennai", []))
+
+    def test_anywhere_in_the_city_and_a_cinema(self):
+        msg, _, _ = self.add(["city:chennai", PVR], ["Avengers: Doomsday"])
+        task = next(iter(state["tasks"].values()))
+        self.assertEqual((task["scope"], task["city"], [c["url"] for c in task["cinemas"]]), ("city", "chennai", [PVR]))
+        self.assertIn("with its own alert when", msg)
 
     def test_too_many_cinema_days(self):
         week = f"{today_ist()}..{now_ist().date() + timedelta(days=6)}"

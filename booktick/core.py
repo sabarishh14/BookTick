@@ -235,11 +235,12 @@ def dates_label(start, end=None):
 # these read both.
 # ---------------------------------------------------------------------------
 def task_cinemas(task):
-    """[{"url", "name"}, ...] for a watcher on cinemas; [] for one on a whole city."""
-    if task.get("scope") == "city":
-        return []
+    """[{"url", "name"}, ...]: the cinemas a watcher follows. A watcher on a whole city can have
+    a few too, and then also alerts when bookings open at one of them ([] when it has none)."""
     if task.get("cinemas"):
         return [c for c in task["cinemas"] if isinstance(c, dict) and c.get("url")]
+    if task.get("scope") == "city":
+        return []
     if task.get("cinema_url"):
         return [{"url": task["cinema_url"], "name": task.get("cinema_name")}]
     return []

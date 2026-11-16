@@ -828,6 +828,7 @@ a.bt-btn { text-decoration: none !important; }
 .bt-cp-text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
 .bt-cp-text b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .92rem; font-weight: 650; }
 .bt-cp-text small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .76rem; color: var(--bt-muted); }
+.bt-cp-anywhere .bt-cp-text small { white-space: normal; }  /* its hint is a sentence; let it wrap on phones */
 .bt-cp-badge { flex: none; max-width: 42%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 3px 9px;
   border-radius: 999px; background: var(--bt-surface-2); color: var(--bt-muted); font-size: .72rem; font-weight: 650; }
 .bt-cp-badge.hot { background: var(--bt-ok-bg); color: var(--bt-ok); }
@@ -852,6 +853,9 @@ a.bt-btn { text-decoration: none !important; }
 .bt-cstate { flex: none; font-size: .74rem; font-weight: 650; color: var(--bt-muted); }
 .bt-cinemas li.open .bt-cstate { color: var(--bt-ok); }
 .bt-cinemas li.soldout .bt-cstate { color: var(--bt-warn); }
+/* A city-wide watcher's own cinemas, under the city */
+.bt-cinemas-note { margin-top: 8px; font-size: .74rem; font-weight: 650; letter-spacing: .02em; color: var(--bt-muted); }
+.bt-cinemas-note + .bt-cinemas { margin-top: 4px !important; }
 .bt-wrow-poster { width: 30px; flex: none; aspect-ratio: 2 / 3; overflow: hidden; border-radius: 6px; background: var(--bt-surface-2); }
 @media (max-width: 640px) {
   .bt-cp-panel { padding: 10px; border-radius: 16px; }

@@ -250,12 +250,12 @@ def cinema_picker_html():
     """The cinemas field: picks as chips, and a searchable list (BookTick.cinemas in app.js).
 
     The script fills it from #bt-cinema-catalog and writes the picks into #bt-cinema-value as a
-    JSON list of cinema links, or ["city:<city>"] for anywhere in the city.
+    JSON list of cinema links, with "city:<city>" first for anywhere in the city.
     """
     return f"""
 <div class="bt-cp" data-max="{MAX_CINEMAS_PER_WATCHER}">
   <span class="bt-field-label" id="bt-cp-label">Where</span>
-  <span class="bt-field-info">Pick up to {MAX_CINEMAS_PER_WATCHER} cinemas, or anywhere in the city. Whichever opens first, you hear.</span>
+  <span class="bt-field-info">Pick up to {MAX_CINEMAS_PER_WATCHER} cinemas, anywhere in the city, or both. Whichever opens first, you hear.</span>
   <div class="bt-cp-picked" aria-live="polite"></div>
   <div class="bt-cp-panel" role="dialog" aria-labelledby="bt-cp-label" hidden>
     <label class="bt-mp-search">{icon("search")}<input type="search" autocomplete="off" spellcheck="false"
@@ -481,10 +481,13 @@ CINEMA_STATES = {
 
 
 def cinemas_html(task_id, t, live):
-    """Where a watcher looks. With several cinemas, one line each and where bookings stand there."""
+    """Where a watcher looks. With several cinemas, one line each and where bookings stand there;
+    a city-wide watcher lists the cinemas it also follows under the city."""
     cinemas = task_cinemas(t)
-    if len(cinemas) < 2:
-        return f'<div class="bt-card-cinema">{place_html(t)}</div>'
+    city = t.get("scope") == "city"
+    place = f'<div class="bt-card-cinema">{place_html(t)}</div>'
+    if len(cinemas) < (1 if city else 2):
+        return place
     statuses = engine.cinema_statuses(task_id) if live else [
         (engine.cinema_label(c), c["url"], None, 0) for c in cinemas]
     rows = []
@@ -495,7 +498,11 @@ def cinemas_html(task_id, t, live):
         link = f'<a href="{href}" target="_blank" rel="noopener noreferrer">{label}</a>' if href else label
         state_html = f'<span class="bt-cstate">{esc(text(shows))}</span>' if status else ""
         rows.append(f'<li class="{tone}"><span class="bt-cdot"></span>{link}{state_html}</li>')
-    return f'<ul class="bt-cinemas">{"".join(rows)}</ul>'
+    listed = f'<ul class="bt-cinemas">{"".join(rows)}</ul>'
+    if not city:
+        return listed
+    return (f'{place}<div class="bt-cinemas-note">Plus its own alert when '
+            f'{"this cinema opens" if len(cinemas) == 1 else "each of these opens"}</div>{listed}')
 
 
 def poster_html(name, cls="bt-card-poster"):
@@ -538,7 +545,7 @@ def watcher_card(task_id, t, session):
     if status == "Done" and t.get("booked"):
         label = "Booked"
     phase, phase_tone = PHASES.get(t.get("phase") or "waiting", PHASES["waiting"])
-    many = len(task_cinemas(t)) > 1
+    many = len(task_cinemas(t)) > 1 and t.get("scope") != "city"  # a city-wide watcher's result is the city's
     live = status in ("Active", "Paused")
     if many and t.get("phase") == "open":
         phase = f"Open at {len(t.get('open_places') or [])} of {len(task_cinemas(t))} cinemas"
@@ -760,8 +767,9 @@ def watcher_row(task_id, t, session):
     label, tone, group = STATUS_META.get(status, (status or "Unknown", "paused", "finished"))
     if status == "Done" and t.get("booked"):
         label = "Booked"
-    where = (f"Any cinema in {district.city_label(t.get('city'))}" if t.get("scope") == "city"
-             else engine.task_place(t))
+    picks = len(task_cinemas(t))
+    where = (f"Any cinema in {district.city_label(t.get('city'))}" + (f" + {plural(picks, 'cinema')}" if picks else "")
+             if t.get("scope") == "city" else engine.task_place(t))
     sub = " · ".join(x for x in (formats_label(t), task_dates_label(t), shorten(where, 46)) if x)
     sent = to_int(t.get("alert_count")) or 0
     return f"""

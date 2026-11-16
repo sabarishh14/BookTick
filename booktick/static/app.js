@@ -792,8 +792,9 @@ document.addEventListener("focusin", (e) => {
 // ---------------------------------------------------------------------------
 // Cinema picker. Python sends the city's cinemas as JSON (#bt-cinema-catalog):
 // {city, label, cinemas: [{u: link, n: name, a: area, m: [movies showing]}]}. Picks go
-// into a hidden textbox (#bt-cinema-value) as a JSON list of links, or ["city:<city>"]
-// for anywhere in the city. A pasted link arrives in #bt-cinema-add.
+// into a hidden textbox (#bt-cinema-value) as a JSON list of links, with "city:<city>" first
+// for anywhere in the city (cinemas picked as well get their own alert as each opens).
+// A pasted link arrives in #bt-cinema-add.
 // ---------------------------------------------------------------------------
 (() => {
   const BT = window.BookTick;
@@ -839,6 +840,7 @@ document.addEventListener("focusin", (e) => {
     if (BT.movies && BT.movies.refresh) BT.movies.refresh();  // "At your cinema" follows these picks
   };
   const anywhere = () => picks().some((p) => p.startsWith(CITY));
+  const picked = () => picks().filter((p) => !p.startsWith(CITY)).length;  // cinemas only
   const cinemaOf = (u) => (S.cat ? S.cat.cinemas.find((c) => cid(c.u) === cid(u)) : null);
   const nameOf = (u) => { const c = cinemaOf(u); return c ? c.n : S.names[cid(u)] || slugName(u); };
   const isPicked = (u) => picks().some((p) => !p.startsWith(CITY) && cid(p) === cid(u));
@@ -863,9 +865,9 @@ document.addEventListener("focusin", (e) => {
       const sub = c ? (c.a || "In " + label) : "Pasted link";
       return chip(ICON.pin, nameOf(p), sub, p);
     }).join("");
-    const full = anywhere() || list.length >= max();
+    const full = picked() >= max();
     const isOpen = r.classList.contains("is-open");
-    const text = !list.length ? "Choose where" : anywhere() ? "Change" : full ? "Change cinemas" : "Add a cinema";
+    const text = !list.length ? "Choose where" : full ? "Change cinemas" : "Add a cinema";
     r.querySelector(".bt-cp-picked").innerHTML = chips + '<button type="button" class="bt-mp-add bt-cp-add' +
       (list.length ? "" : " is-empty") + '" aria-expanded="' + isOpen + '">' + svg(list.length ? ICON.plus : ICON.pin) +
       "<span>" + text + "</span></button>";
@@ -881,7 +883,8 @@ document.addEventListener("focusin", (e) => {
     anyBtn.classList.toggle("is-on", any);
     anyBtn.setAttribute("aria-pressed", String(any));
     anyBtn.innerHTML = '<span class="bt-cp-icon">' + svg(ICON.city) + '</span><span class="bt-cp-text"><b>Anywhere in ' +
-      esc(label) + "</b><small>Every cinema in the city. You hear wherever it opens first.</small></span>" +
+      esc(label) + "</b><small>" + (any ? "Every cinema in the city. Tick cinemas below to hear about each of them too."
+        : "Every cinema in the city. You hear wherever it opens first.") + "</small></span>" +
       '<span class="bt-cp-check">' + svg(ICON.check) + "</span>";
     const list = r.querySelector(".bt-cp-list");
     if (!S.cat) {
@@ -891,22 +894,23 @@ document.addEventListener("focusin", (e) => {
       const rows = S.cat.cinemas.filter((c) => !q || low(c.n + " " + c.a).includes(q))
         .map((c) => ({ c, hit: showing(c) }))
         .sort((x, y) => (y.hit ? 1 : 0) - (x.hit ? 1 : 0));  // ones showing your movie first, else A–Z as sent
-      const full = picks().filter((p) => !p.startsWith(CITY)).length >= max();
+      const full = picked() >= max();
       list.innerHTML = rows.length ? rows.map(({ c, hit }) => {
         const on = isPicked(c.u);
-        const off = !on && (full || any);
+        const off = !on && full;
         const badge = hit ? '<span class="bt-cp-badge hot">Showing ' + esc(hit) + "</span>"
           : '<span class="bt-cp-badge">' + (c.m || []).length + " movies</span>";
         return '<button type="button" class="bt-cp-row' + (on ? " is-on" : "") + (off ? " is-full" : "") +
-          '" role="option" aria-selected="' + on + '" data-cp-cinema="' + esc(c.u) + '"' + (off && !any ? ' title="Up to ' +
+          '" role="option" aria-selected="' + on + '" data-cp-cinema="' + esc(c.u) + '"' + (off ? ' title="Up to ' +
           max() + ' cinemas"' : "") + '><span class="bt-cp-check">' + svg(ICON.check) + '</span><span class="bt-cp-text"><b>' +
           esc(c.n) + "</b><small>" + esc(c.a || label) + (hit ? '<em class="bt-cp-hit"> · Showing ' + esc(hit) + "</em>" : "") +
           "</small></span>" + badge + "</button>";
       }).join("") : '<div class="bt-mp-empty">No cinema called “' + esc(S.q.trim()) + "” in " + esc(label) +
         ". You can paste its link from district.in below.</div>";
     }
-    const n = picks().filter((p) => !p.startsWith(CITY)).length;
-    r.querySelector(".bt-cp-count").textContent = any ? "Watching the whole city"
+    const n = picked();
+    const cinemas = n + (n === 1 ? " cinema" : " cinemas");
+    r.querySelector(".bt-cp-count").textContent = any ? "Whole city" + (n ? " + " + cinemas : "")
       : n ? n + " of " + max() + " cinemas picked" : "Pick up to " + max() + " cinemas";
   };
   const render = () => {
@@ -936,7 +940,7 @@ document.addEventListener("focusin", (e) => {
     const list = picks();
     const i = list.findIndex((p) => !p.startsWith(CITY) && cid(p) === cid(u));
     if (i >= 0) list.splice(i, 1);
-    else if (!anywhere() && list.length < max()) list.push(u);
+    else if (picked() < max()) list.push(u);
     else return false;
     save();
     return true;
@@ -957,7 +961,9 @@ document.addEventListener("focusin", (e) => {
       return;
     }
     if (t.closest(".bt-cp-anywhere")) {
-      S.picks = anywhere() || !S.cat ? [] : [CITY + S.cat.city];
+      // On or off; the cinemas picked stay either way.
+      const cinemas = picks().filter((p) => !p.startsWith(CITY));
+      S.picks = anywhere() || !S.cat ? cinemas : [CITY + S.cat.city].concat(cinemas);
       save();
       render();
       return;
@@ -1011,8 +1017,7 @@ document.addEventListener("focusin", (e) => {
       try { c = JSON.parse(json || "null"); } catch (e) { c = null; }
       if (!c || !c.u) return [];
       S.names[cid(c.u)] = c.n;
-      if (anywhere()) S.picks = [];
-      if (!isPicked(c.u) && picks().length < max()) { picks().push(c.u); save(); }
+      if (!isPicked(c.u) && picked() < max()) { picks().push(c.u); save(); }
       render();
       return [];
     },

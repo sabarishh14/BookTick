@@ -183,9 +183,11 @@ def load_directory(city):
 
 
 def watch_targets(cinema_value, cin_url=""):
-    """Where to watch: ("city", city), ("cinemas", [links]), or (None, why not).
+    """Where to watch: (city or None, [cinema links], why not or None).
 
-    `cinema_value` is the picker's JSON list; a link still in the paste box counts too.
+    `cinema_value` is the picker's JSON list; a link still in the paste box counts too. A city
+    and cinemas together means anywhere in the city, with its own alert as each of those opens.
+    Raises ValueError for a city BookTick doesn't know.
     """
     raw = str(cinema_value or "").strip()
     try:
@@ -194,8 +196,7 @@ def watch_targets(cinema_value, cin_url=""):
         picks = []
     picks = [str(p) for p in picks if p] + ([cin_url] if district.clean_cinema_url(cin_url) else [])
     city = next((p[len(CITY_PREFIX):] for p in picks if p.startswith(CITY_PREFIX)), None)
-    if city:
-        return "city", district.valid_city(city)
+    city = district.valid_city(city) if city else None
     links, seen = [], set()
     for p in picks:
         link = district.clean_cinema_url(p)
@@ -203,11 +204,11 @@ def watch_targets(cinema_value, cin_url=""):
         if link and cid and cid not in seen:
             seen.add(cid)
             links.append(link.split("?")[0])
-    if not links:
-        return None, "Pick a cinema (or anywhere in the city), or paste a cinema's link from district.in."
+    if not links and not city:
+        return None, [], "Pick a cinema (or anywhere in the city), or paste a cinema's link from district.in."
     if len(links) > MAX_CINEMAS_PER_WATCHER:
-        return None, f"A watcher can follow up to {MAX_CINEMAS_PER_WATCHER} cinemas. Remove a few, or pick anywhere in the city."
-    return "cinemas", links
+        return None, [], f"A watcher can follow up to {MAX_CINEMAS_PER_WATCHER} cinemas. Remove a few, or pick anywhere in the city."
+    return city, links, None
 
 
 def picked_formats(value):
@@ -230,11 +231,11 @@ def page_shows(kind, url):
 def preview_shows(cinema_value, cin_url, movie_names, formats, slots, date_val):
     movies = movie_text(movie_names)
     try:
-        scope, where = watch_targets(cinema_value, cin_url)
+        city, links, why = watch_targets(cinema_value, cin_url)
     except ValueError as e:
         return callout("err", "Which city?", esc(str(e)))
-    if not scope:
-        return callout("err", "Which cinema?", esc(where))
+    if why:
+        return callout("err", "Which cinema?", esc(why))
     dates = parse_dates(date_val)
     if not dates:
         return callout("err", "Pick show dates", f"Choose a day, or up to {MAX_RANGE_DAYS} days in a row.")
@@ -242,10 +243,10 @@ def preview_shows(cinema_value, cin_url, movie_names, formats, slots, date_val):
     task = {"movie_filter": movies, "formats": picked_formats(formats), "time_slots": slots or []}
     range_note = (f" · BookTick watches all of {dates_label(*dates)}" if dates[1] != dates[0] else "")
 
-    if scope == "city":
-        return city_preview(where, task, date, range_note)
+    if city:
+        return city_preview(city, task, date, range_note)  # the city's listings have your cinemas' shows too
     shows, places, failed = [], [], []
-    for link in where:
+    for link in links:
         try:
             place, found = page_shows("cinema", district.query_url(link, date))
             places.append(place)
@@ -336,12 +337,11 @@ def test_user_notification(session, user_name, cinema_value, cin_url, ntfy_top, 
         return callout("warn", "Hold on a moment", esc(wait))
     task = dict(channels, user_label=(user_name or "").strip() or "Test")
     try:
-        scope, where = watch_targets(cinema_value, cin_url)
+        city, links, _ = watch_targets(cinema_value, cin_url)
     except ValueError:
-        scope, where = None, None
-    link = where[0] if scope == "cinemas" else None
-    place = (cinema_name(link) if link else f"Cinemas in {district.city_label(where)}" if scope == "city"
-             else "Sample Cinema")
+        city, links = None, []
+    link = links[0] if links and not city else None
+    place = (f"Cinemas in {district.city_label(city)}" if city else cinema_name(link) if link else "Sample Cinema")
     results = send_task_notification(task, sample_shows(link, place), place, test=True)
     if all(ok for _, ok, _ in results):
         return callout("ok", "Test alert sent. Check your phone.", esc(describe_results(results)))
@@ -357,12 +357,12 @@ def add_new_watcher(session, user_name, cinema_value, cin_url, movie_names, form
         return fail("Reload the page", "BookTick couldn't tell which watchers are yours. Reload and try again.")
     movies = movie_list(movie_names)
     try:
-        scope, where = watch_targets(cinema_value, cin_url)
+        city, links, why = watch_targets(cinema_value, cin_url)
     except ValueError as e:
         return fail("Which city?", esc(str(e)))
-    if not scope:
-        return fail("Which cinema?", esc(where))
-    if scope == "city" and not movies:
+    if why:
+        return fail("Which cinema?", esc(why))
+    if city and not movies:
         return fail("Which movie?", "Pick the movie to watch across the city.")
     dates = parse_dates(date_val)
     if not dates:
@@ -370,11 +370,11 @@ def add_new_watcher(session, user_name, cinema_value, cin_url, movie_names, form
     if dates[1] < today_ist():
         return fail("Pick a date from today on", "That date has already passed.")
     first_day = max(dates[0], today_ist())
-    if scope == "cinemas" and not session.get("admin"):
+    if links and not session.get("admin"):
         days = (to_date(dates[1]) - to_date(first_day)).days + 1
-        if len(where) * days > MAX_CINEMA_DAYS:
+        if len(links) * days > MAX_CINEMA_DAYS:
             return fail("That's a lot to keep checking",
-                        f"{plural(len(where), 'cinema')} × {plural(days, 'day')} is {len(where) * days} cinema-days, and a "
+                        f"{plural(len(links), 'cinema')} × {plural(days, 'day')} is {len(links) * days} cinema-days, and a "
                         f"watcher can check up to {MAX_CINEMA_DAYS}. Pick fewer cinemas or days.")
     channels, error = clean_channels(ntfy_top, tg_tok, tg_chat, disc_url)
     if error:
@@ -386,7 +386,7 @@ def add_new_watcher(session, user_name, cinema_value, cin_url, movie_names, form
                     esc(limit))
 
     name = shorten((user_name or "").strip() or name_for(session["owner"]), 40)
-    cinemas = [{"url": link, "name": cinema_name(link)} for link in where] if scope == "cinemas" else []
+    cinemas = [{"url": link, "name": cinema_name(link)} for link in links]
     formats = picked_formats(formats)
     now = time.time()
     created = []
@@ -397,8 +397,8 @@ def add_new_watcher(session, user_name, cinema_value, cin_url, movie_names, form
             owner=session["owner"],
             network=network,
             user_label=name,
-            scope="city" if scope == "city" else "cinema",
-            city=where if scope == "city" else None,
+            scope="city" if city else "cinema",
+            city=city,
             cinemas=[dict(c) for c in cinemas],
             target_date=first_day,
             target_date_to=dates[1],
@@ -423,6 +423,9 @@ def add_new_watcher(session, user_name, cinema_value, cin_url, movie_names, form
 
     first = created[0]
     where_text, how = engine.task_place(first), formats_label(first)
+    if city and cinemas:
+        each = f"{cinemas[0]['name']} opens" if len(cinemas) == 1 else f"each of your {len(cinemas)} cinemas opens"
+        where_text = f"any cinema in {district.city_label(city)}, with its own alert when {each}"
     for task in created:
         add_log(f"➕ [{name}] watching for {task['movie_filter'] or 'any movie'} ({how}) at {where_text}, "
                 f"{task_dates_label(task)}.", (task["owner"],))
@@ -526,7 +529,7 @@ def send_test(task, session):
     if wait:
         return False, wait
     place = engine.task_place(task)
-    cinemas = task_cinemas(task)
+    cinemas = task_cinemas(task) if task.get("scope") != "city" else []
     results = send_task_notification(task, sample_shows(cinemas[0]["url"] if cinemas else None, place), place, test=True)
     summary = describe_results(results)
     add_log(f"🧪 [{task.get('user_label')}] test alert: {summary}", (task.get("owner"),))
