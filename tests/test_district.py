@@ -65,6 +65,50 @@ class SameTimeTwoScreens(unittest.TestCase):
         self.assertIn("-69286-", links["SCREEN 4"])
 
 
+class UpcomingPage(unittest.TestCase):
+    """District's upcoming-movies page, cut down to the shape it has."""
+
+    def page(self, movies):
+        rails = [{"items": [{"ItemDetails": {"MovieData": m}} for m in movies]}]
+        data = {"props": {"pageProps": {"data": {"serverState": {"EDSResponse": {"rails": rails}}}}}}
+        return f'<script id="__NEXT_DATA__" type="application/json">{json.dumps(data)}</script>'
+
+    def test_soonest_first_with_posters_and_languages(self):
+        movies = [
+            {"movie_id": "2", "name": "Avengers: Doomsday", "release_date": "1797465600", "languages": ["English", "Hindi"],
+             "image": "https://cdn.district.in/a.jpg", "genres": ["Action"], "censor": "TBA",
+             "web_url": "https://www.district.in/movies/avengers-doomsday-movie-tickets-MV176735"},
+            {"movie_id": "1", "name": "Superhero", "release_date": "1794960000", "movie_variants": [{"language": "Tamil"}],
+             "image": "https://cdn.district.in/s.jpg"},
+            {"movie_id": "3", "name": "No Date Yet", "release_date": "", "image": "javascript:alert(1)"},
+        ]
+        out = district.parse_upcoming_page(self.page(movies))
+        self.assertEqual([m["name"] for m in out], ["Superhero", "Avengers: Doomsday", "No Date Yet"])
+        self.assertEqual(out[0]["released"], "2026-11-18")
+        self.assertEqual(out[0]["langs"], ["Tamil"])          # from the variants when there's no list
+        self.assertEqual(out[1]["langs"], ["English", "Hindi"])
+        self.assertIsNone(out[1]["censor"])                  # "TBA" isn't a rating
+        self.assertIsNone(out[2]["released"])
+        self.assertIsNone(out[2]["poster"])                  # only https images
+
+    def test_an_empty_page_is_an_error(self):
+        with self.assertRaises(ValueError):
+            district.parse_upcoming_page(self.page([]))
+
+    def test_a_far_off_placeholder_date_means_not_announced(self):
+        out = district.parse_upcoming_page(self.page([{"movie_id": "9", "name": "Wife", "release_date": "3786825600"}]))
+        self.assertIsNone(out[0]["released"])  # District's 2090-01-01
+
+    def test_movies_home_page_stream(self):
+        movie = {"movie_id": "176735", "name": "Avengers: Doomsday", "release_date": "1797465600",
+                 "languages": ["English"], "image": "https://cdn.district.in/a.jpg"}
+        stream = json.dumps({"rails": [{"items": [{"ItemDetails": {"MovieData": movie}}]}]})
+        half = len(stream) // 2  # the page splits its data across several chunks
+        page = "".join(f"<script>self.__next_f.push([1,{json.dumps(part)}])</script>" for part in (stream[:half], stream[half:]))
+        out = district.parse_movies_home(page)
+        self.assertEqual([(m["name"], m["released"]) for m in out], [("Avengers: Doomsday", "2026-12-17")])
+
+
 class CityPage(unittest.TestCase):
     def setUp(self):
         self.directory = district.parse_city_page(fixture("city_page.html"))
@@ -82,6 +126,11 @@ class CityPage(unittest.TestCase):
         for m in movies:
             self.assertTrue(m["id"].isdigit())
             self.assertIsNotNone(district.city_movie_url(m["url"], "chennai"))
+
+    def test_movies_carry_what_the_picker_shows(self):
+        for m in self.directory["movies"]:
+            self.assertEqual(set(m), {"id", "name", "url", "poster", "langs", "genres", "censor", "released"})
+            self.assertTrue(m["poster"] is None or m["poster"].startswith("https://"))
 
     def test_matching_movies(self):
         name = self.directory["movies"][0]["name"]

@@ -465,7 +465,7 @@
 (() => {
   document.addEventListener("focusin", (e) => {
     const input = e.target;
-    if (!(input instanceof HTMLInputElement) || !input.closest(".bt-dd") || input.closest("#bt-movie")) return;
+    if (!(input instanceof HTMLInputElement) || !input.closest(".bt-dd")) return;
     setTimeout(() => { if (document.activeElement === input && input.value) input.select(); }, 0);
   });
 })();
@@ -508,3 +508,263 @@ document.addEventListener("focusin", (e) => {
     requestAnimationFrame(() => window.dispatchEvent(new Event("scroll")));
   }
 });
+
+// ---------------------------------------------------------------------------
+// Movie picker. Python sends the movies to pick from as JSON (#bt-movie-catalog):
+// {here: [names at the picked cinema], now: [showing in the city], soon: [coming soon],
+// langs: [languages, the city's first]}; each movie is {n: name, p: poster, l: languages,
+// g: genres, c: rating, w: release label}. Picks go into a hidden textbox
+// (#bt-movie-value) as a JSON list of names, which is what the Python handlers read.
+// ---------------------------------------------------------------------------
+(() => {
+  const BT = window.BookTick;
+  if (!BT || BT.movies) return;
+  const S = { cat: null, picks: null, tab: "now", lang: "all", q: "" };
+  const root = () => document.querySelector(".bt-mp");
+  const field = () => document.querySelector("#bt-movie-value input, #bt-movie-value textarea");
+  const esc = (t) => String(t == null ? "" : t).replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const svg = (d) => '<svg class="bt-i" viewBox="0 0 24 24" aria-hidden="true">' + d + "</svg>";
+  const ICON = {
+    plus: '<path d="M12 5v14M5 12h14"/>', x: '<path d="M18 6 6 18M6 6l12 12"/>', check: '<path d="M20 6 9 17l-5-5"/>',
+    film: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 3v18M17 3v18M3 7.5h4M3 12h18M3 16.5h4M17 7.5h4M17 16.5h4"/>',
+  };
+  const low = (s) => String(s).toLocaleLowerCase();
+  const initial = (name) => (String(name).match(/[\p{L}\p{N}]/u) || ["?"])[0].toUpperCase();
+
+  const picks = () => {
+    if (S.picks === null) {
+      const el = field();
+      if (!el) return [];
+      try {
+        const v = JSON.parse(el.value || "[]");
+        S.picks = Array.isArray(v) ? v.map(String).filter((x) => x.trim()) : [];
+      } catch (e) {
+        S.picks = String(el.value || "").split(",").map((x) => x.trim()).filter(Boolean);
+      }
+    }
+    return S.picks;
+  };
+  const save = () => {
+    const el = field();
+    if (!el) return;
+    el.value = JSON.stringify(picks());
+    el.dispatchEvent(new Event("input", { bubbles: true }));  // tells Gradio the value changed
+  };
+  const isPicked = (name) => picks().some((p) => low(p) === low(name));
+  const isHere = (name) => !!S.cat && S.cat.here.some((h) => low(h) === low(name));
+  const find = (name) => {
+    if (!S.cat) return null;
+    const n = low(name);
+    const now = S.cat.now.find((m) => low(m.n) === n);
+    if (now) return { m: now, kind: "now" };
+    const soon = S.cat.soon.find((m) => low(m.n) === n);
+    return soon ? { m: soon, kind: "soon" } : null;
+  };
+  const poster = (m, name, extra) => '<span class="bt-mp-poster" data-initial="' + esc(initial(name)) + '">' +
+    (m && m.p ? '<img src="' + esc(m.p) + '" alt="" loading="lazy" decoding="async">' : "") + (extra || "") + "</span>";
+
+  // --- The picks, as poster chips ---------------------------------------------
+  const renderPicked = (r) => {
+    const box = r.querySelector(".bt-mp-picked");
+    const list = picks();
+    const chips = list.map((name) => {
+      const hit = find(name);
+      const meta = !S.cat ? "" : !hit ? "Not on District yet · watching for the name"
+        : hit.kind === "soon" ? (hit.m.w === "Date TBA" ? "Coming soon · date TBA" : "Coming " + hit.m.w)
+        : isHere(name) ? "Showing at this cinema" : "Showing in the city";
+      return '<span class="bt-mp-chip">' + poster(hit && hit.m, name) +
+        '<span class="bt-mp-chip-text"><b>' + esc(name) + "</b><small>" + esc(meta) + "</small></span>" +
+        '<button type="button" class="bt-mp-remove" data-mp-remove="' + esc(name) + '" aria-label="Remove ' +
+        esc(name) + '" title="Remove">' + svg(ICON.x) + "</button></span>";
+    }).join("");
+    const isOpen = r.classList.contains("is-open");
+    const label = list.length ? "Add another" : "Choose a movie";
+    box.innerHTML = chips + '<button type="button" class="bt-mp-add' + (list.length ? "" : " is-empty") +
+      '" aria-expanded="' + isOpen + '">' + svg(list.length ? ICON.plus : ICON.film) + "<span>" + label + "</span></button>";
+  };
+
+  // --- The panel of posters ----------------------------------------------------
+  const items = () => {
+    const c = S.cat;
+    if (!c) return [];
+    const q = low(S.q.trim());
+    let out;
+    if (q) {
+      out = c.now.map((m) => ({ m, kind: "now" })).concat(c.soon.map((m) => ({ m, kind: "soon" })))
+        .filter((x) => low(x.m.n).includes(q));
+    } else if (S.tab === "now") {
+      out = c.now.map((m) => ({ m, kind: "now" }));
+    } else {
+      out = c.soon.map((m) => ({ m, kind: "soon" }));
+    }
+    out.forEach((x) => { x.here = x.kind === "now" && isHere(x.m.n); });
+    return out.sort((a, b) => (b.here ? 1 : 0) - (a.here ? 1 : 0));  // this cinema's first, else as sent
+  };
+  const card = (x) => {
+    const m = x.m;
+    const on = isPicked(m.n);
+    const tag = x.here ? '<span class="bt-mp-tag here">At this cinema</span>'
+      : x.kind === "soon" ? '<span class="bt-mp-tag">' + esc(m.w) + "</span>" : "";
+    const meta = x.kind === "soon" ? (m.l || []).slice(0, 2).join(", ")
+      : [(m.l || []).slice(0, 2).join(", "), m.c].filter(Boolean).join(" · ");
+    const title = m.n + ((m.g || []).length ? " · " + m.g.join(", ") : "");
+    return '<button type="button" class="bt-mp-card' + (on ? " is-on" : "") + '" role="option" aria-selected="' + on +
+      '" data-mp-name="' + esc(m.n) + '" title="' + esc(title) + '">' +
+      poster(m, m.n, tag + '<span class="bt-mp-check">' + svg(ICON.check) + "</span>") +
+      '<span class="bt-mp-name">' + esc(m.n) + '</span><span class="bt-mp-meta">' + esc(meta) + "</span></button>";
+  };
+  const renderPanel = (r) => {
+    const panel = r && r.querySelector(".bt-mp-panel");
+    if (!panel || panel.hidden) return;
+    const c = S.cat;
+    const searching = !!S.q.trim();
+    r.querySelectorAll("[data-mp-tab]").forEach((b) => {
+      const on = !searching && b.getAttribute("data-mp-tab") === S.tab;
+      b.setAttribute("aria-selected", String(on));
+      b.classList.toggle("is-on", on);
+      b.querySelector("b").textContent = c ? String(c[b.getAttribute("data-mp-tab")].length) : "";
+    });
+    const all = items();
+    // Language chips: the ones in this list, in the city's order (its own languages first).
+    const present = new Set([].concat(...all.map((x) => x.m.l || [])));
+    const langs = c ? c.langs.filter((l) => present.has(l)) : [];
+    if (S.lang !== "all" && !present.has(S.lang)) S.lang = "all";
+    // While searching, every language counts, so the language chips step aside.
+    r.querySelector(".bt-mp-langs").innerHTML = searching || langs.length < 2 ? "" : ["all"].concat(langs).map((l) =>
+      '<button type="button" data-mp-lang="' + esc(l) + '" class="' + (S.lang === l ? "is-on" : "") +
+      '" aria-pressed="' + (S.lang === l) + '">' + esc(l === "all" ? "All languages" : l) + "</button>").join("");
+    const shown = searching || S.lang === "all" ? all : all.filter((x) => (x.m.l || []).includes(S.lang));
+    const grid = r.querySelector(".bt-mp-grid");
+    if (!c) {
+      grid.innerHTML = '<div class="bt-mp-empty">Loading movies…</div>';
+    } else if (!shown.length) {
+      grid.innerHTML = '<div class="bt-mp-empty">' + (searching
+        ? "No movie called “" + esc(S.q.trim()) + "” on District yet. You can still watch for the name."
+        : S.tab === "now" ? "Nothing is showing here right now." : "Nothing has been announced yet.") + "</div>";
+    } else {
+      grid.innerHTML = shown.map(card).join("");
+    }
+    // A name that isn't listed yet: watch for it anyway.
+    const q = S.q.trim();
+    const custom = r.querySelector(".bt-mp-custom");
+    const exact = q && all.some((x) => low(x.m.n) === low(q));
+    custom.hidden = !q || exact || isPicked(q);
+    custom.textContent = q ? "Watch for “" + q + "” anyway" : "";
+  };
+  const render = () => {
+    const r = root();
+    if (!r || !field()) return false;
+    renderPicked(r);
+    renderPanel(r);
+    return true;
+  };
+
+  const open = (r) => {
+    if (S.cat && !S.cat.now.length && S.cat.soon.length) S.tab = "soon";
+    r.querySelector(".bt-mp-panel").hidden = false;
+    r.classList.add("is-open");
+    render();
+    const input = r.querySelector(".bt-mp-search input");
+    if (input && window.matchMedia("(pointer: fine)").matches) input.focus({ preventScroll: true });
+  };
+  const close = (r, refocus) => {
+    const panel = r.querySelector(".bt-mp-panel");
+    if (!panel || panel.hidden) return;
+    panel.hidden = true;
+    r.classList.remove("is-open");
+    renderPicked(r);
+    if (refocus) { const add = r.querySelector(".bt-mp-add"); if (add) add.focus(); }
+  };
+  const toggle = (name) => {
+    const list = picks();
+    const i = list.findIndex((p) => low(p) === low(name));
+    if (i >= 0) list.splice(i, 1); else list.push(name);
+    save();
+  };
+  const clearSearch = (r) => {
+    S.q = "";
+    const input = r.querySelector(".bt-mp-search input");
+    if (input) input.value = "";
+  };
+
+  document.addEventListener("click", (e) => {
+    const t = e.target instanceof Element ? e.target : null;
+    const r = root();
+    if (!t || !r) return;
+    if (!r.contains(t) || !t.isConnected) { if (t.isConnected) close(r, false); return; }
+    if (t.closest(".bt-mp-add")) { if (r.classList.contains("is-open")) close(r, false); else open(r); return; }
+    const rm = t.closest("[data-mp-remove]");
+    if (rm) { toggle(rm.getAttribute("data-mp-remove")); render(); return; }
+    const cardEl = t.closest(".bt-mp-card");
+    if (cardEl) {
+      const name = cardEl.getAttribute("data-mp-name");
+      toggle(name);
+      const on = isPicked(name);
+      cardEl.classList.toggle("is-on", on);  // in place, so the grid keeps its scroll position
+      cardEl.setAttribute("aria-selected", String(on));
+      renderPicked(r);
+      return;
+    }
+    const tab = t.closest("[data-mp-tab]");
+    if (tab) {
+      S.tab = tab.getAttribute("data-mp-tab");
+      clearSearch(r);
+      renderPanel(r);
+      r.querySelector(".bt-mp-grid").scrollTop = 0;
+      return;
+    }
+    const lang = t.closest("[data-mp-lang]");
+    if (lang) {
+      S.lang = lang.getAttribute("data-mp-lang");
+      renderPanel(r);
+      r.querySelector(".bt-mp-grid").scrollTop = 0;
+      return;
+    }
+    if (t.closest(".bt-mp-custom")) {
+      const q = S.q.trim();
+      if (q && !isPicked(q)) toggle(q);
+      clearSearch(r);
+      render();
+      return;
+    }
+    if (t.closest(".bt-mp-done")) close(r, true);
+  });
+  document.addEventListener("input", (e) => {
+    const input = e.target instanceof Element ? e.target.closest(".bt-mp-search input") : null;
+    if (!input) return;
+    S.q = input.value;
+    const r = root();
+    renderPanel(r);
+    r.querySelector(".bt-mp-grid").scrollTop = 0;
+  });
+  document.addEventListener("keydown", (e) => {
+    const r = root();
+    if (!r || !r.classList.contains("is-open")) return;
+    if (e.key === "Escape") { e.preventDefault(); close(r, true); return; }
+    const input = e.target instanceof Element ? e.target.closest(".bt-mp-search input") : null;
+    if (input && e.key === "Enter") {
+      e.preventDefault();
+      const shown = r.querySelectorAll(".bt-mp-card");
+      const custom = r.querySelector(".bt-mp-custom");
+      if (shown.length === 1) shown[0].click();
+      else if (custom && !custom.hidden) custom.click();
+    }
+  });
+  document.addEventListener("focusin", (e) => {
+    const r = root();
+    if (r && r.classList.contains("is-open") && e.target instanceof Element && !r.contains(e.target)) close(r, false);
+  });
+
+  BT.movies = {
+    load: (json) => {
+      try { S.cat = JSON.parse(json || "null"); } catch (e) { S.cat = null; }
+      if (S.cat) ["here", "now", "soon", "langs"].forEach((k) => { if (!Array.isArray(S.cat[k])) S.cat[k] = []; });
+      if (!render()) setTimeout(() => BT.movies.load(json), 200);
+      return [];
+    },
+  };
+  // Draw the picks as soon as the field exists, before the posters arrive.
+  const wait = setInterval(() => { if (render()) clearInterval(wait); }, 200);
+  setTimeout(() => clearInterval(wait), 30000);
+})();

@@ -7,11 +7,12 @@ import json
 import re
 import threading
 import time
+from datetime import datetime
 from urllib.parse import urlparse
 
 import requests
 
-from .core import parse_time, to_float, to_int
+from .core import IST, parse_time, to_float, to_int
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -299,6 +300,8 @@ def fetch_shows(kind, url):
 # Directory: cities, their cinemas, and what's showing
 # ---------------------------------------------------------------------------
 CITY_SITEMAP_URL = "https://cdn.district.in/sitemap/sitemap-cinema-city.xml"
+UPCOMING_URL = "https://www.district.in/movies/upcoming-movies"
+MOVIES_HOME_URL = "https://www.district.in/movies/"
 POPULAR_CITIES = [
     "chennai", "bengaluru", "mumbai", "new-delhi", "hyderabad", "kolkata", "pune", "ahmedabad", "kochi",
     "coimbatore", "gurgaon", "noida", "jaipur", "lucknow", "chandigarh", "vizag", "madurai", "trivandrum",
@@ -358,6 +361,76 @@ def city_choices():
     return [(city_label(k), k) for k in top + rest]
 
 
+def movie_card(movie):
+    """What the movie picker shows for one of District's movies: name, poster, languages, release date."""
+    released = None
+    try:
+        stamp = int(movie.get("release_date") or 0)
+        if stamp > 0:
+            released = datetime.fromtimestamp(stamp, IST).strftime("%Y-%m-%d")
+    except (TypeError, ValueError, OverflowError, OSError):
+        pass
+    if released and released >= "2080":
+        released = None  # District's stand-in for "date not announced" (2090-01-01)
+    langs = [str(x) for x in movie.get("languages") or [] if isinstance(x, str)]
+    if not langs:
+        langs = [v["language"] for v in movie.get("movie_variants") or [] if isinstance(v, dict) and v.get("language")]
+    poster = movie.get("image") if str(movie.get("image") or "").startswith("https://") else None
+    return {"id": str(movie.get("movie_id") or ""), "name": movie["name"], "url": movie.get("web_url"),
+            "poster": poster, "langs": list(dict.fromkeys(langs)),
+            "genres": [str(g) for g in movie.get("genres") or [] if isinstance(g, str)][:3],
+            "censor": movie.get("censor") if movie.get("censor") not in (None, "", "TBA") else None,
+            "released": released}
+
+
+def parse_upcoming_page(page):
+    """District's upcoming-movies page -> movies not out yet, soonest first (no date last)."""
+    rails = dig(next_data(page), "props", "pageProps", "data", "serverState", "EDSResponse", "rails") or []
+    movies = {}
+    for rail in rails:
+        for item in rail.get("items") or []:
+            for node in [item] + list(item.get("children") or []):
+                movie = dig(node, "ItemDetails", "MovieData") or {}
+                if movie.get("name") and movie.get("movie_id"):
+                    movies.setdefault(str(movie["movie_id"]), movie_card(movie))
+    if not movies:
+        raise ValueError("District's upcoming page didn't list any movies")
+    return sorted(movies.values(), key=lambda m: (m["released"] or "9999", m["name"].lower()))
+
+
+def parse_movies_home(page):
+    """District's movies home page -> the movies it lists, with advance bookings for big releases.
+
+    That page is streamed (Next.js app router), so its movies are inside the script chunks
+    that call self.__next_f.push.
+    """
+    chunks = re.findall(r'self\.__next_f\.push\(\[1,("(?:[^"\\]|\\.)*")\]\)', page)
+    stream = "".join(json.loads(c) for c in chunks)
+    decoder, movies = json.JSONDecoder(), {}
+    for match in re.finditer(r'"MovieData":\s*', stream):
+        try:
+            movie, _ = decoder.raw_decode(stream, match.end())
+        except ValueError:
+            continue
+        if isinstance(movie, dict) and movie.get("name") and movie.get("movie_id"):
+            movies.setdefault(str(movie["movie_id"]), movie_card(movie))
+    return list(movies.values())
+
+
+def upcoming_movies():
+    """Movies that may open for booking: District's upcoming list, plus its movies home page
+    (big releases with advance bookings move there). Soonest first; cached for 3 hours."""
+    def load():
+        found = {m["name"].lower(): m for m in parse_upcoming_page(fetch_html(UPCOMING_URL))}
+        try:
+            for m in parse_movies_home(fetch_html(MOVIES_HOME_URL)):
+                found.setdefault(m["name"].lower(), m)
+        except Exception:
+            pass  # the upcoming list alone is still useful
+        return sorted(found.values(), key=lambda m: (m["released"] or "9999", m["name"].lower()))
+    return cached("upcoming", 3 * 3600, load, fallback=[])
+
+
 def parse_city_page(page):
     """District's 'cinemas in <city>' page -> {"cinemas": [...], "movies": [...]}."""
     rails = dig(next_data(page), "props", "pageProps", "data", "serverState", "EDSResponse", "rails") or []
@@ -376,8 +449,7 @@ def parse_city_page(page):
                     continue
                 here.append(movie["name"])
                 if movie.get("movie_id") and movie.get("web_url"):
-                    movies.setdefault(str(movie["movie_id"]), {
-                        "id": str(movie["movie_id"]), "name": movie["name"], "url": movie["web_url"]})
+                    movies.setdefault(str(movie["movie_id"]), movie_card(movie))
             cinemas[cid] = {
                 "id": cid,
                 "name": name,
@@ -421,13 +493,6 @@ def known_cinema_name(url):
 def cinema_label(cinema, city):
     """'PVR Grand Mall, Velachery, Chennai' -> 'PVR Grand Mall, Velachery' (the city is already picked)."""
     return re.sub(rf",\s*{re.escape(city_label(city))}\s*$", "", cinema["name"], flags=re.I) or cinema["name"]
-
-
-def movie_choices(cinemas, cinema=None):
-    """This cinema's movies first, then everything else showing in the city."""
-    here = list(cinema["movies"]) if cinema else []
-    elsewhere = sorted({m for c in cinemas for m in c["movies"]} - set(here), key=str.lower)
-    return here + elsewhere
 
 
 def matching_movies(movies, keywords):

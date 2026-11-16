@@ -9,8 +9,9 @@ GUIDE_HTML = f"""
   <ol>
     <li><b>City and cinema.</b> Pick your city, then a cinema. Pick <b>Any cinema in &lt;city&gt;</b> to hear the moment your
       movie opens anywhere there. A cinema that isn't listed? Paste its link from district.in under <b>Or paste a cinema link</b>.</li>
-    <li><b>Movie.</b> Pick one, or type the name and press Enter if bookings haven't opened yet. Part of the name is enough,
-      and you can add more than one.</li>
+    <li><b>Movie.</b> Tap <b>Choose a movie</b> and pick a poster: <b>Now showing</b> puts your cinema's movies first,
+      and <b>Coming soon</b> has every upcoming movie on District with its release date. Search by name or filter by
+      language, and pick more than one if you like. Not on District yet? Type its name and tap <b>Watch for it anyway</b>.</li>
     <li><b>Format.</b> IMAX, 4DX, 3D, 2D, your own, or ANY.</li>
     <li><b>Show date.</b> One day, or up to {MAX_RANGE_DAYS} in a row with <b>A few days</b>. Times are Indian Standard Time.</li>
     <li><b>Show time.</b> Tick morning, afternoon, evening or night, or leave them all unticked for any time.</li>

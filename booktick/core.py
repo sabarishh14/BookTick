@@ -1,4 +1,5 @@
 """Time and text helpers, the shared in-memory state, and the activity log."""
+import json
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -124,6 +125,18 @@ def fmt_price(price):
     if not price:
         return "—"
     return f"₹{price:.0f}" if float(price).is_integer() else f"₹{price:.2f}"
+
+
+def movie_text(value):
+    """The movie picker sends a JSON list of names; watchers store them comma-separated."""
+    if isinstance(value, str) and value.strip().startswith("["):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            pass
+    if isinstance(value, (list, tuple)):
+        return ", ".join(str(v).strip() for v in value if str(v).strip())
+    return str(value or "").strip()
 
 
 def shorten(text, limit):

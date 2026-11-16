@@ -1,12 +1,15 @@
 """HTML for the page. Anything a visitor typed (names, movies, links) is escaped here."""
 import html as html_lib
+import json
 import re
 from collections import Counter
+from datetime import datetime, timedelta
 
 from . import access, district, engine, seatmap, tracker
 from .config import (ADMIN_KEY, APP_NAME, APP_TAGLINE, AUTHOR_NAME, DATABASE_URL, GITHUB_AVATAR, GITHUB_URL,
                      MAX_RANGE_DAYS, TIME_SLOTS)
-from .core import (ago, date_is_past, dates_label, fmt_clock, fmt_price, logs_for, plural, shorten, state, task_dates,
+from .core import (ago, date_is_past, dates_label, fmt_clock, fmt_price, logs_for, now_ist, plural, shorten, state,
+                   task_dates, today_ist,
                    task_dates_label, tasks_lock, to_int)
 
 esc = html_lib.escape
@@ -42,6 +45,8 @@ ICONS = {
     "seat": '<path d="M7 18v3M17 18v3"/><path d="M5 11V6a3 3 0 0 1 3-3h8a3 3 0 0 1 3 3v5"/><rect x="3" y="11" width="18" height="7" rx="2"/>',
     "link": '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
     "city": '<path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4M10 10h4M10 14h4M10 18h4"/>',
+    "search": '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+    "x": '<path d="M18 6 6 18M6 6l12 12"/>',
     "shield": '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
 }
 
@@ -175,6 +180,74 @@ def date_picker_html(value):
     <div class="bt-cal-quick"></div>
   </div>
 </div>"""
+
+
+# --- Movie picker ---------------------------------------------------------------
+def movie_picker_html():
+    """The movie field: picks as poster chips, and a panel of posters (BookTick.movies in app.js).
+
+    The script draws the posters from the catalog Python sends (#bt-movie-catalog) and writes
+    the picks, as a JSON list of names, into a hidden textbox (#bt-movie-value).
+    """
+    return f"""
+<div class="bt-mp">
+  <span class="bt-field-label" id="bt-mp-label">Movie</span>
+  <span class="bt-field-info">Pick from what's showing or coming soon. You can pick more than one.</span>
+  <div class="bt-mp-picked" aria-live="polite"></div>
+  <div class="bt-mp-panel" role="dialog" aria-labelledby="bt-mp-label" hidden>
+    <label class="bt-mp-search">{icon("search")}<input type="search" autocomplete="off" spellcheck="false"
+      placeholder="Search movies" aria-label="Search movies"></label>
+    <div class="bt-mp-tabs" role="tablist">
+      <button type="button" role="tab" data-mp-tab="now">Now showing<b></b></button>
+      <button type="button" role="tab" data-mp-tab="soon">Coming soon<b></b></button>
+    </div>
+    <div class="bt-mp-langs" role="group" aria-label="Language"></div>
+    <div class="bt-mp-grid" role="listbox" aria-multiselectable="true" aria-label="Movies"></div>
+    <div class="bt-mp-foot">
+      <button type="button" class="bt-btn bt-mp-custom" hidden></button>
+      <button type="button" class="bt-btn primary bt-mp-done">Done</button>
+    </div>
+  </div>
+</div>"""
+
+
+def release_label(day):
+    """'Today', 'Tomorrow', 'Fri 18 Dec', or 'Date TBA'."""
+    if not day:
+        return "Date TBA"
+    if day <= today_ist():
+        return "Out now"
+    if day == str(now_ist().date() + timedelta(days=1)):
+        return "Tomorrow"
+    return datetime.strptime(day, "%Y-%m-%d").strftime("%a %d %b")
+
+
+def movie_catalog(movies, here=()):
+    """What the movie picker shows, as JSON: this cinema's movies, everything showing in the city
+    (newest first), and every movie coming soon: soonest first, then those with no date yet, then
+    those already out elsewhere but not here. With posters and languages."""
+    now = sorted(movies, key=lambda m: m.get("released") or "", reverse=True)
+    showing = {m["name"].lower() for m in now}
+    today = today_ist()
+    try:
+        soon = [m for m in district.upcoming_movies() if m["name"].lower() not in showing]
+    except Exception:
+        soon = []
+    soon.sort(key=lambda m: (0, m["released"]) if m.get("released") and m["released"] > today
+              else (1, m["name"].lower()) if not m.get("released") else (2, m["released"]))
+    # The city's own languages first (what's showing there most), then the rest.
+    here_langs = Counter(lang for m in now for lang in m["langs"])
+    later = Counter(lang for m in soon for lang in m["langs"])
+    langs = [lang for lang, _ in here_langs.most_common()] + [lang for lang, _ in later.most_common() if lang not in here_langs]
+
+    def card(m, coming=False):
+        out = {"n": m["name"], "p": m.get("poster"), "l": m["langs"], "g": m.get("genres") or [], "c": m.get("censor")}
+        if coming:
+            out["w"] = release_label(m.get("released"))
+        return out
+
+    return json.dumps({"here": list(here), "now": [card(m) for m in now], "soon": [card(m, True) for m in soon],
+                       "langs": langs}, separators=(",", ":"), ensure_ascii=False)
 
 
 # ---------------------------------------------------------------------------

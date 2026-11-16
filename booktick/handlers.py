@@ -18,11 +18,11 @@ from .names import name_for
 from .alerts import describe_results, sample_shows, send_task_notification
 from .config import (DEFAULT_CITY, DEFAULT_URL, MAX_INTERVAL, MAX_RANGE_DAYS, MAX_TRACKED_SHOWS, MIN_INTERVAL,
                      PREVIEW_CACHE, TIME_SLOTS, TRACK_DAYS_AHEAD)
-from .core import (add_log, date_label, dates_label, log_lock, now_ist, parse_dates, plural, shorten, state,
+from .core import (add_log, date_label, dates_label, log_lock, movie_text, now_ist, parse_dates, plural, shorten, state,
                    task_dates_label, tasks_lock, today_ist, wake_engine)
 from .storage import save_tasks
 from .views import (admin_status_html, callout, cinema_card, city_card, engine_note_html, esc, hint, icon,
-                    logs_html, show_groups, status_html, trackers_html, watcher_title, watchers_html)
+                    logs_html, movie_catalog, show_groups, status_html, trackers_html, watcher_title, watchers_html)
 
 SLOT_CHOICES = [(label, key) for key, label, _, _ in TIME_SLOTS]
 CITY_PREFIX = "city:"
@@ -36,13 +36,6 @@ def keep():
 def toast(ok, text):
     """Pop-up message. Gradio renders toasts as HTML, so the text is escaped here."""
     (gr.Info if ok else gr.Warning)(esc(shorten(text, 240)))
-
-
-def movie_text(value):
-    """The movie picker returns a list; watchers store the names comma-separated."""
-    if isinstance(value, (list, tuple)):
-        return ", ".join(str(v).strip() for v in value if str(v).strip())
-    return str(value or "").strip()
 
 
 def clean_channels(ntfy, tg_token, tg_chat, discord):
@@ -142,30 +135,21 @@ def cinema_options(cinemas, city):
     return [any_cinema] + [(district.cinema_label(c, city), c["url"]) for c in cinemas]
 
 
-def movie_update(cinemas, cinema, picked):
-    """New movie suggestions that keep the movies already picked.
-
-    Gradio 4.44 remembers multiselect picks by their position in the list, so the picks
-    are sent again with the new list. Otherwise they would shift onto other movies.
-    """
-    picked = [m for m in (picked or []) if str(m).strip()]
-    return gr.update(choices=district.movie_choices(cinemas, cinema), value=picked)
-
-
-def on_city_change(city, picked):
-    """New city: list its cinemas. The cinema has to be picked again."""
+def on_city_change(city):
+    """New city: list its cinemas and movies. The cinema has to be picked again."""
     try:
-        cinemas = district.city_cinemas(city)
+        directory = district.city_directory(city)
     except Exception as e:
         info = callout("err", f"Couldn't load cinemas in {esc(district.city_label(city))}",
                        f"{esc(str(e))}. You can paste a cinema link below instead.")
-        return gr.update(choices=[], value=None), keep(), info, gr.update(open=True), ""
-    info = hint(f"{plural(len(cinemas), 'cinema')} in {esc(district.city_label(city))}. "
+        return gr.update(choices=[], value=None), movie_catalog([]), info, gr.update(open=True), ""
+    info = hint(f"{plural(len(directory['cinemas']), 'cinema')} in {esc(district.city_label(city))}. "
                 "Pick one, or <b>Any cinema</b> to watch the whole city.")
-    return gr.update(choices=cinema_options(cinemas, city), value=None), movie_update(cinemas, None, picked), info, keep(), ""
+    return (gr.update(choices=cinema_options(directory["cinemas"], city), value=None),
+            movie_catalog(directory["movies"]), info, keep(), "")
 
 
-def on_cinema_change(city, value, picked):
+def on_cinema_change(city, value):
     """Cinema picked: use its link and put its movies first. "Any cinema" watches the whole city."""
     if not value:
         return "", keep(), ""
@@ -174,39 +158,39 @@ def on_cinema_change(city, value, picked):
     except Exception:
         directory = {"cinemas": [], "movies": []}
     if str(value).startswith(CITY_PREFIX):
-        return "", movie_update(directory["cinemas"], None, picked), city_card(city, directory)
+        return "", movie_catalog(directory["movies"]), city_card(city, directory)
     cinema = next((c for c in directory["cinemas"] if c["url"] == value), None)
-    return value, movie_update(directory["cinemas"], cinema, picked), cinema_card(cinema)
+    return value, movie_catalog(directory["movies"], cinema["movies"] if cinema else ()), cinema_card(cinema)
 
 
-def on_link_input(url, city, picked):
+def on_link_input(url, city):
     """A pasted link: select that cinema in the list when it's in the chosen city."""
     cid = district.cinema_id_from_url(url)
     try:
-        cinemas = district.city_cinemas(city)
+        directory = district.city_directory(city)
     except Exception:
-        cinemas = []
-    cinema = next((c for c in cinemas if cid and c["id"] == cid), None)
+        directory = {"cinemas": [], "movies": []}
+    cinema = next((c for c in directory["cinemas"] if cid and c["id"] == cid), None)
     if cinema:
-        return gr.update(value=cinema["url"]), movie_update(cinemas, cinema, picked), cinema_card(cinema)
+        return gr.update(value=cinema["url"]), movie_catalog(directory["movies"], cinema["movies"]), cinema_card(cinema)
     clean = district.clean_cinema_url(url)
     info = hint(f"Using the pasted link: <b>{esc(district.cinema_name_from_url(clean))}</b>") if clean else ""
     return gr.update(value=None), keep(), info
 
 
-def load_directory(city, url, picked):
-    """On page load: fill the city list, that city's cinemas, and the movie suggestions."""
+def load_directory(city, url):
+    """On page load: fill the city list, that city's cinemas, and the movie picker."""
     city = city or DEFAULT_CITY
     cities = gr.update(choices=district.city_choices(), value=city)
     try:
-        cinemas = district.city_cinemas(city)
+        directory = district.city_directory(city)
     except Exception as e:
         info = callout("warn", "Couldn't load the cinema list right now", f"{esc(str(e))}. The link below still works.")
-        return cities, keep(), keep(), info
+        return cities, keep(), movie_catalog([]), info
     cid = district.cinema_id_from_url(url)
-    cinema = next((c for c in cinemas if cid and c["id"] == cid), None)
-    return (cities, gr.update(choices=cinema_options(cinemas, city), value=cinema["url"] if cinema else None),
-            movie_update(cinemas, cinema, picked), cinema_card(cinema))
+    cinema = next((c for c in directory["cinemas"] if cid and c["id"] == cid), None)
+    return (cities, gr.update(choices=cinema_options(directory["cinemas"], city), value=cinema["url"] if cinema else None),
+            movie_catalog(directory["movies"], cinema["movies"] if cinema else ()), cinema_card(cinema))
 
 
 def watch_target(cinema_value, cin_url):

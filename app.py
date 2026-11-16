@@ -21,8 +21,8 @@ from booktick.engine import start_engine
 from booktick.storage import start_storage
 from booktick.theme import CSS, HEAD, favicon_file, theme
 from booktick.views import (about_html, admin_status_html, cinema_skeleton, date_picker_html,
-                            engine_note_html, footer_html, header_html, icon, logs_skeleton, status_skeleton,
-                            step_head, watchers_skeleton)
+                            engine_note_html, footer_html, header_html, icon, logs_skeleton, movie_picker_html,
+                            status_skeleton, step_head, watchers_skeleton)
 
 # ---------------------------------------------------------------------------
 # ZeroGPU compatibility
@@ -84,12 +84,7 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
                                 elem_id="bt-cinema-pick", elem_classes=["bt-dd", "bt-dir"],
                             )
                         cinema_info = gr.HTML(cinema_skeleton(), elem_id="bt-cinema-info", elem_classes="bt-root-html")
-                        movie_filter_input = gr.Dropdown(
-                            label="Movie", choices=["Ramayana"], value=["Ramayana"], multiselect=True, allow_custom_value=True,
-                            elem_id="bt-movie", elem_classes=["bt-dd", "bt-dir"],
-                            info="Movies at this cinema come first, then the rest of the city. Not listed yet? "
-                                 "Type the name and press Enter. Part of a name is enough.",
-                        )
+                        gr.HTML(movie_picker_html(), elem_classes="bt-root-html")
                         with gr.Row():
                             format_filter_input = gr.Dropdown(
                                 label="Format", choices=FORMAT_CHOICES, value="IMAX", allow_custom_value=True,
@@ -236,32 +231,37 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
     gr.HTML(footer_html(), elem_classes="bt-root-html")
 
     # Hidden bridges for the page script (see static/app.js): who you are, the admin key to
-    # remember, the date picked in the calendar, and the buttons on the watcher cards.
+    # remember, the date picked in the calendar, the movies picked and the posters to pick
+    # from, and the buttons on the watcher cards.
     identity_box = hidden_box("bt-identity")
     admin_store = hidden_box("bt-admin-store")
     target_date_input = hidden_box("bt-date", today_ist())
+    movie_value = hidden_box("bt-movie-value", '["Ramayana"]')
+    movie_catalog = hidden_box("bt-movie-catalog")
     action_box = hidden_box("bt-action")
     action_btn = gr.Button("Run action", elem_id="bt-action-btn", elem_classes="bt-hidden")
 
     # --- Events ---------------------------------------------------------------
-    pick_inputs = [cinema_input, cin_url_input, movie_filter_input, format_filter_input, slots_input, target_date_input]
+    pick_inputs = [cinema_input, cin_url_input, movie_value, format_filter_input, slots_input, target_date_input]
     channels = [ntfy_topic_input, tg_token_input, tg_chat_input, disc_hook_input]
     admin_views = [engine_controls, unlock_row, lock_btn, clear_logs_btn]
     live = [status_box, watchers_box, log_box, trackers_box]
     tr_channels = [tr_ntfy, tr_tg_token, tr_tg_chat, tr_discord]
 
     city_input.input(
-        h.on_city_change, inputs=[city_input, movie_filter_input],
-        outputs=[cinema_input, movie_filter_input, cinema_info, link_accordion, cin_url_input],
+        h.on_city_change, inputs=[city_input],
+        outputs=[cinema_input, movie_catalog, cinema_info, link_accordion, cin_url_input],
     )
     cinema_input.input(
-        h.on_cinema_change, inputs=[city_input, cinema_input, movie_filter_input],
-        outputs=[cin_url_input, movie_filter_input, cinema_info], show_progress="hidden",
+        h.on_cinema_change, inputs=[city_input, cinema_input],
+        outputs=[cin_url_input, movie_catalog, cinema_info], show_progress="hidden",
     )
     cin_url_input.input(
-        h.on_link_input, inputs=[cin_url_input, city_input, movie_filter_input],
-        outputs=[cinema_input, movie_filter_input, cinema_info], show_progress="hidden", trigger_mode="always_last",
+        h.on_link_input, inputs=[cin_url_input, city_input],
+        outputs=[cinema_input, movie_catalog, cinema_info], show_progress="hidden", trigger_mode="always_last",
     )
+    # New posters to pick from (a new city or cinema): the page script redraws the picker.
+    movie_catalog.change(None, inputs=[movie_catalog], js=f"(v) => ({JS} && {JS}.movies ? {JS}.movies.load(v) : [])")
     preview_btn.click(h.preview_shows, inputs=pick_inputs, outputs=[preview_out])
     test_notify_btn.click(
         h.test_user_notification, inputs=[session, user_name_input, cinema_input, cin_url_input] + channels,
@@ -319,8 +319,8 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
     )
     # Separate so a slow District page never holds up the rest of the page.
     demo.load(
-        h.load_directory, inputs=[city_input, cin_url_input, movie_filter_input],
-        outputs=[city_input, cinema_input, movie_filter_input, cinema_info],
+        h.load_directory, inputs=[city_input, cin_url_input],
+        outputs=[city_input, cinema_input, movie_catalog, cinema_info],
         show_progress="hidden",
     ).then(None, js=f"() => ({JS} ? {JS}.booted() : [])")  # runs even if loading failed
     # The tracker's form: its own city and cinema lists, and the coming week (fresh every load).
