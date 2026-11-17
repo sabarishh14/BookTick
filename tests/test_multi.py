@@ -230,7 +230,10 @@ class AcrossTheCity(unittest.TestCase):
         engine.check_task(self.task, self.page, today_ist(), "Cinemas in Chennai", list(shows))
 
     def wait(self):
-        self.task["last_spread_ts"] -= engine.CITY_SPREAD_GAP  # as if a few minutes went by
+        """As if a few minutes went by (since the alert, and since the cinemas named so far)."""
+        self.task["last_spread_ts"] -= engine.CITY_SPREAD_GAP
+        self.task["told_cinemas"] = {k: (at - engine.CITY_SPREAD_GAP if at else 0)
+                                     for k, at in engine.told_cinemas(self.task).items()}
 
     def kinds(self):
         return [c.kwargs["kind"] for c in self.send.call_args_list]
@@ -275,6 +278,23 @@ class AcrossTheCity(unittest.TestCase):
         self.assertIn("ags-CD2?fromdate=", card)       # each cinema links to its page
         self.assertIn("Open at more cinemas", card)    # the alerts sent, newest first
         self.assertIn('class="bt-sent"', card)
+
+    def test_watchers_saved_with_a_list_still_work(self):
+        # An earlier version saved told_cinemas as a list of keys; reading it as a dict crashed.
+        self.task.update(phase="open", reminders_left=0, told_cinemas=[f"{today_ist()}|1"])
+        self.check(at("Kasi", 1), at("AGS", 2))
+        self.assertEqual(self.kinds(), ["spread"])  # Kasi was told before; AGS is new
+        self.assertEqual(self.send.call_args.args[2], "AGS")
+        self.assertIsInstance(self.task["told_cinemas"], dict)  # saved in the new form
+        self.task["told_cinemas"] = [f"{today_ist()}|1"]
+        self.assertIn("Open now at 2 cinemas", views.watcher_card("w1", self.task, {"owner": "o"}))
+
+    def test_a_card_that_cant_be_drawn_doesnt_break_the_tab(self):
+        with mock.patch("booktick.views.full_watcher_card", side_effect=ValueError("bad")), \
+                mock.patch("booktick.views.traceback.print_exc"):
+            card = views.watcher_card("w1", self.task, {"owner": "o"})
+        self.assertIn("Avengers: Doomsday", card)
+        self.assertIn("still being checked", card)
 
     def test_a_long_list_folds_away(self):
         self.check(*[at(f"Cinema{i}", i) for i in range(8)])

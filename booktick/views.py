@@ -2,6 +2,7 @@
 import html as html_lib
 import json
 import re
+import traceback
 from collections import Counter
 from datetime import datetime, timedelta
 
@@ -588,7 +589,24 @@ def admin_meta(task_id, task):
     return f'<div class="bt-admin-meta">{added}Watcher <code>{esc(task_id)}</code></div>'
 
 
+_card_errors = set()  # watchers whose card failed, so the error is printed once, not on every refresh
+
+
 def watcher_card(task_id, t, session):
+    """A watcher's card. One that can't be drawn gets a plain stand-in, so it never takes the
+    whole Watchers tab (and the page load with it) down."""
+    try:
+        return full_watcher_card(task_id, t, session)
+    except Exception:
+        if task_id not in _card_errors:
+            _card_errors.add(task_id)
+            traceback.print_exc()
+        return (f'<article class="bt-card" data-status="{esc(str(t.get("status", "")))}" data-group="Active">'
+                f'<h3 class="bt-card-title">{esc(watcher_title(t))}</h3>'
+                f'{hint("This watcher&#39;s details couldn&#39;t be shown right now. It&#39;s still being checked.")}</article>')
+
+
+def full_watcher_card(task_id, t, session):
     status = t.get("status", "")
     label, tone, group = STATUS_META.get(status, (status or "Unknown", "paused", "finished"))
     movie = esc(watcher_title(t))

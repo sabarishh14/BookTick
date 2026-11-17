@@ -131,6 +131,15 @@ def show_cinema(show):
     return district.cinema_id_from_url(show.get("cinema_url")) or str(show.get("cinema") or "").strip().lower()
 
 
+def told_cinemas(task):
+    """{"<date>|<cinema>": when it was named} for a city-wide watcher. Watchers saved by an
+    earlier version kept a plain list of keys, without times (0)."""
+    raw = task.get("told_cinemas") or {}
+    if isinstance(raw, dict):
+        return dict(raw)
+    return {str(k): 0 for k in raw if isinstance(k, str)} if isinstance(raw, list) else {}
+
+
 def shows_place(task, shows):
     """Where a city-wide alert's shows are: the cinema, or '27 cinemas in Chennai' (the alert
     then lists them, one line each)."""
@@ -202,7 +211,7 @@ def check_task(task, page, date, place, shows):
         # Ones that open close together share an alert, and none is dropped while it waits.
         # (A city-wide watcher's own cinemas have their own alert, from their own pages.)
         # told_cinemas: {"<date>|<cinema>": when it was told, or 0 if it was open before that was noted}.
-        told = dict(task.get("told_cinemas") or {})
+        told = told_cinemas(task)
         key = lambda s: f"{date}|{show_cinema(s)}"  # noqa: E731
         spread, own = [], set()
         if entry is None and city:
@@ -571,8 +580,8 @@ def city_open(task_id):
             return []
         expected = set(task.get("expected_pages") or [])
         pages = [dict(rows) for p, rows in (task.get("city_open") or {}).items() if p in expected]
-        told = dict(task.get("told_cinemas") or {})
-        own = {district.cinema_id_from_url(c["url"]) for c in task_cinemas(task)}
+        told = told_cinemas(task)
+        own ={district.cinema_id_from_url(c["url"]) for c in task_cinemas(task)}
     merged = {}
     for rows in pages:
         for cid, (name, url, shows, date) in rows.items():
