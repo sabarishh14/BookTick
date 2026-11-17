@@ -856,6 +856,35 @@ a.bt-btn { text-decoration: none !important; }
 /* A city-wide watcher's own cinemas, under the city */
 .bt-cinemas-note { margin-top: 8px; font-size: .74rem; font-weight: 650; letter-spacing: .02em; color: var(--bt-muted); }
 .bt-cinemas-note + .bt-cinemas { margin-top: 4px !important; }
+/* A city-wide watcher's open cinemas: the card's full width, the rest folded and scrolling */
+.bt-city-open { padding: 10px 12px; border-radius: 12px; background: var(--bt-surface-2); }
+.bt-city-open > .bt-cinemas-note:first-child { margin-top: 0; color: var(--bt-ok); }
+.bt-more-cinemas[open] > .bt-cinemas { max-height: 220px; overflow-y: auto; padding-right: 4px !important; }
+.bt-more-cinemas { margin-top: 4px; }
+.bt-more-cinemas summary { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; list-style: none;
+  font-size: .78rem; font-weight: 650; color: var(--bt-brand); }
+.bt-more-cinemas summary::-webkit-details-marker { display: none; }
+.bt-more-cinemas summary::before { content: "+"; font-weight: 800; }
+.bt-more-cinemas[open] summary::before { content: "−"; }
+/* The alerts a watcher sent: tap "N alerts sent" */
+.bt-sent > summary { cursor: pointer; list-style: none; }
+.bt-sent > summary::-webkit-details-marker { display: none; }
+.bt-sent > summary b { display: inline-flex; align-items: center; gap: 4px; }
+.bt-sent > summary:hover b { color: var(--bt-brand); }
+.bt-sent-chev { font-size: 14px; transition: transform .15s; }
+.bt-sent[open] .bt-sent-chev { transform: rotate(180deg); }
+.bt-sent-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 0 !important; padding: 10px 12px !important;
+  list-style: none !important; border-radius: 12px; background: var(--bt-surface-2); }
+.bt-sent-list li { display: flex; gap: 10px; margin: 0 !important; padding: 0 !important; font-size: .8rem; line-height: 1.4; min-width: 0; }
+.bt-sent-list li::marker { content: none; }
+.bt-sent-list time { flex: none; min-width: 62px; color: var(--bt-muted); font-variant-numeric: tabular-nums; }
+.bt-sent-list span { min-width: 0; overflow-wrap: anywhere; color: var(--bt-muted); }
+.bt-sent-list b { color: var(--bt-text); font-weight: 650; }
+.bt-sent-list a { color: var(--bt-text) !important; text-decoration: none !important; }
+.bt-sent-list a:hover { color: var(--bt-brand) !important; }
+.bt-sent-list a .bt-i { font-size: 11px; margin-left: 3px; opacity: .7; }
+.bt-sent-fail { margin-left: 6px; font-style: normal; font-weight: 650; color: var(--bt-warn); }
+.bt-sent-older span { font-style: italic; }
 .bt-wrow-poster { width: 30px; flex: none; aspect-ratio: 2 / 3; overflow: hidden; border-radius: 6px; background: var(--bt-surface-2); }
 @media (max-width: 640px) {
   .bt-cp-panel { padding: 10px; border-radius: 16px; }

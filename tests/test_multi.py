@@ -259,6 +259,29 @@ class AcrossTheCity(unittest.TestCase):
         self.assertEqual(self.kinds(), ["spread"])
         self.assertEqual(self.send.call_args.args[2], "Rohini")
 
+    def test_the_card_shows_where_its_open_and_the_alerts_sent(self):
+        self.check(at("Kasi", 1))
+        self.wait()
+        self.check(at("Kasi", 1), at("AGS", 2), at("AGS", 2, n=2))
+        log = self.task["alert_log"]
+        self.assertEqual([(r["kind"], r["place"]) for r in log], [("opened", "Kasi"), ("spread", "AGS")])
+        self.assertIn("kasi-CD1?fromdate=", log[0]["link"])  # one cinema: the alert links to it
+        card = views.watcher_card("w1", self.task, {"owner": "o"})
+        self.assertIn("Open at 2 cinemas", card)
+        self.assertIn("Open now at 2 cinemas", card)
+        self.assertRegex(card, r"2 shows · \d{1,2}:\d{2} [AP]M<")  # AGS opened after the first alert: when
+        self.assertIn("1 show</span>", card)           # Kasi was in the first alert
+        self.assertLess(card.index(">AGS<"), card.index(">Kasi<"))
+        self.assertIn("ags-CD2?fromdate=", card)       # each cinema links to its page
+        self.assertIn("Open at more cinemas", card)    # the alerts sent, newest first
+        self.assertIn('class="bt-sent"', card)
+
+    def test_a_long_list_folds_away(self):
+        self.check(*[at(f"Cinema{i}", i) for i in range(8)])
+        card = views.watcher_card("w1", self.task, {"owner": "o"})
+        self.assertIn("Open now at 8 cinemas", card)
+        self.assertIn("3 more cinemas</summary>", card)
+
     def test_the_alert_names_every_cinema(self):
         from booktick import alerts
         one = alerts.show_lines([at("Kasi", 1), at("Kasi", 1, n=2)], city="chennai")

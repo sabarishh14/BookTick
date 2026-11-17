@@ -6,6 +6,7 @@ from collections import Counter
 from datetime import datetime, timedelta
 
 from . import access, district, engine, seatmap, tracker
+from .alerts import cinema_short
 from .config import (ADMIN_KEY, APP_NAME, APP_TAGLINE, AUTHOR_NAME, DATABASE_URL, GITHUB_AVATAR, GITHUB_URL,
                      BASE_FORMATS, FORMATS, MAX_CINEMAS_PER_WATCHER, MAX_RANGE_DAYS, TIME_SLOTS)
 from .core import (ago, date_is_past, dates_label, fmt_clock, fmt_price, formats_label, logs_for, now_ist, plural,
@@ -486,7 +487,9 @@ def cinemas_html(task_id, t, live):
     cinemas = task_cinemas(t)
     city = t.get("scope") == "city"
     place = f'<div class="bt-card-cinema">{place_html(t)}</div>'
-    if len(cinemas) < (1 if city else 2):
+    if city and not cinemas:
+        return place
+    if len(cinemas) < 2 and not city:
         return place
     statuses = engine.cinema_statuses(task_id) if live else [
         (engine.cinema_label(c), c["url"], None, 0) for c in cinemas]
@@ -503,6 +506,66 @@ def cinemas_html(task_id, t, live):
         return listed
     return (f'{place}<div class="bt-cinemas-note">Plus its own alert when '
             f'{"this cinema opens" if len(cinemas) == 1 else "each of these opens"}</div>{listed}')
+
+
+CITY_OPEN_SHOWN = 5  # cinemas a city-wide watcher's card lists before "N more cinemas"
+
+
+def clock_at(ts):
+    """'11:42 PM' today, else 'Mon 16 Nov · 11:42 PM' (IST)."""
+    when = datetime.fromtimestamp(float(ts), now_ist().tzinfo)
+    return ("" if when.date() == now_ist().date() else when.strftime("%a %d %b · ")) + fmt_clock(when)
+
+
+def city_open_html(task_id, t):
+    """A city-wide watcher's cinemas with seats right now, newest to open first, each linked to its
+    page. The ones that opened after its first alert say when."""
+    rows = engine.city_open(task_id)
+    if not rows:
+        return ""
+    first_seen = min((at for _, _, _, at in rows if at), default=0)  # the first alert's cinemas
+
+    def line(row):
+        name, url, shows, at = row
+        label = esc(shorten(cinema_short(name, t.get("city")), 60))
+        href = safe_href(url)
+        link = f'<a href="{href}" target="_blank" rel="noopener noreferrer">{label}</a>' if href else label
+        since = f" · {clock_at(at)}" if at > first_seen else ""
+        return f'<li class="open"><span class="bt-cdot"></span>{link}<span class="bt-cstate">{plural(shows, "show")}{since}</span></li>'
+
+    first, rest = rows[:CITY_OPEN_SHOWN], rows[CITY_OPEN_SHOWN:]
+    out = (f'<div class="bt-cinemas-note">Open now at {plural(len(rows), "cinema")}</div>'
+           f'<ul class="bt-cinemas">{"".join(line(r) for r in first)}</ul>')
+    if rest:
+        out += (f'<details class="bt-more-cinemas"><summary>{plural(len(rest), "more cinema")}</summary>'
+                f'<ul class="bt-cinemas">{"".join(line(r) for r in rest)}</ul></details>')
+    return f'<div class="bt-city-open">{out}</div>'
+
+
+ALERT_NAMES = {"opened": "Tickets open", "reopened": "Reopened", "reminder": "Reminder", "more_seats": "More seats",
+               "also_open": "Also open", "spread": "Open at more cinemas", "closed": "Closed"}
+
+
+def sent_html(t, phase, tone, sent):
+    """Where bookings stand and how many alerts went out; tap it for the alerts themselves."""
+    row = f'<span>{esc(phase)}</span><b>{plural(sent, "alert")} sent'
+    log = [r for r in (t.get("alert_log") or []) if isinstance(r, dict) and r.get("ts")]
+    if not log:
+        return f'<div class="bt-phase {tone}">{row}</b></div>'
+    items = []
+    for r in reversed(log):
+        place = esc(shorten(r.get("place") or "", 60))
+        href = safe_href(r.get("link"))
+        if href:
+            place = f'<a href="{href}" target="_blank" rel="noopener noreferrer">{place}{icon("external")}</a>'
+        shows = f" · {plural(to_int(r.get('shows')) or 0, 'show')}" if r.get("shows") else ""
+        failed = '<em class="bt-sent-fail">didn\'t go through</em>' if r.get("ok") is False else ""
+        items.append(f'<li><time>{esc(clock_at(r["ts"]))}</time><span><b>{esc(ALERT_NAMES.get(r.get("kind"), "Alert"))}'
+                     f'</b> · {place}{shows}{failed}</span></li>')
+    if sent > len(log):
+        items.append('<li class="bt-sent-older"><span>Older alerts aren\'t listed.</span></li>')
+    return (f'<details class="bt-sent"><summary class="bt-phase {tone}">{row}{icon("chevron-down", "bt-sent-chev")}</b>'
+            f'</summary><ol class="bt-sent-list">{"".join(items)}</ol></details>')
 
 
 def poster_html(name, cls="bt-card-poster"):
@@ -549,6 +612,9 @@ def watcher_card(task_id, t, session):
     live = status in ("Active", "Paused")
     if many and t.get("phase") == "open":
         phase = f"Open at {len(t.get('open_places') or [])} of {len(task_cinemas(t))} cinemas"
+    elif t.get("scope") == "city" and t.get("phase") == "open" and live:
+        open_at = len(engine.city_open(task_id)) + len(t.get("open_places") or [])  # plus its own cinemas
+        phase = f"Open at {plural(open_at, 'cinema')}" if open_at else phase
     if status == "Done":
         phase, phase_tone = ("Stopped after you booked" if t.get("booked") else "Finished"), ""
 
@@ -602,8 +668,9 @@ def watcher_card(task_id, t, session):
       {cinemas_html(task_id, t, live)}
     </div>
   </div>
+  {city_open_html(task_id, t) if live and t.get("scope") == "city" else ""}
   <div class="bt-tags">{"".join(tags)}</div>
-  <div class="bt-phase {phase_tone}"><span>{esc(phase)}</span><b>{plural(sent, "alert")} sent</b></div>
+  {sent_html(t, phase, phase_tone, sent)}
   {seatmap_link(t)}
   {last_html}
   <div class="bt-chans">{icon("bell")}{channel_chips(t, detailed=bool(session.get("admin") or mine))}</div>

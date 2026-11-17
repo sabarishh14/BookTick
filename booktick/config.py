@@ -32,6 +32,7 @@ KEEP_FINISHED_DAYS = 7       # finished watchers are removed this many days afte
 MORE_SEATS_MIN = 10          # seats a show must gain before a "more seats" alert (or any, if it was sold out)
 MORE_SEATS_GAP = 900         # at least this many seconds between "more seats" alerts for one watcher
 CITY_SPREAD_GAP = 180        # a city-wide watcher names the cinemas that opened since, at most this often
+ALERT_LOG_KEEP = 12          # alerts a watcher's card lists (the newest)
 MAX_SEATMAPS = 8             # seat maps sent when bookings open: one per matching show, earliest first
 
 # --- Seat tracker ---------------------------------------------------------------
