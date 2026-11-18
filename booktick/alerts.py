@@ -8,7 +8,7 @@ import requests
 
 from .actions import action_url
 from .config import APP_NAME, BRAND_DISCORD_COLOR
-from .core import fmt_price, fmt_when, now_ist, plural, redact, seats_text, shorten, task_cinemas
+from .core import fmt_clock, fmt_price, fmt_when, now_ist, plural, redact, seats_text, shorten, task_cinemas
 from .district import city_label, query_url, short_cinema_name
 
 
@@ -42,26 +42,54 @@ def seats_change(show):
     return f"{change} · {seats_text(show)}"
 
 
+DETAIL_SHOWS = 8  # shows at several cinemas: up to this many are each listed, under their cinema
+TIMES_SHOWN = 3  # past that, each cinema gets one line with its first few start times
+
+
+def show_line(s):
+    return f"• {fmt_when(s.get('start'))} · {s['format']} · {seats_change(s)} · {fmt_price(s.get('price'))}"
+
+
+def times_text(shows, n=TIMES_SHOWN):
+    """When shows start, the first few: 'Fri 21 Nov 7:30 PM, 10:45 PM +2 more'."""
+    starts = sorted(dict.fromkeys(s["start"] for s in shows if s.get("start")))
+    if not starts:
+        return ""
+    picked, more = starts[:n], len(starts) - n
+    if len({d.date() for d in picked}) == 1:
+        text = picked[0].strftime("%a %d %b ") + ", ".join(fmt_clock(d) for d in picked)
+    else:
+        text = ", ".join(d.strftime("%a %d %b ") + fmt_clock(d) for d in picked)
+    return text + (f" +{more} more" if more > 0 else "")
+
+
 def show_lines(shows, limit=5, city=None, kind=None):
-    """One line per show. Shows at several cinemas (a city-wide alert) get one line per cinema
-    instead, so every cinema is named, not just the first few shows'."""
+    """One line per show. Shows at several cinemas are listed under each cinema's name; when
+    there are too many for that (a busy city-wide alert), each cinema gets one line with its
+    first few start times, so every cinema is still named."""
     cinemas = list(dict.fromkeys(s.get("cinema") or "Cinema" for s in shows))
+    groups = [(name, [s for s in shows if (s.get("cinema") or "Cinema") == name]) for name in cinemas]
     lines = []
+    if len(cinemas) > 1 and len(shows) <= DETAIL_SHOWS:
+        for name, mine in groups:
+            lines += ([""] if lines else []) + [f"📍 {shorten(cinema_short(name, city), 60)}"]
+            lines += [show_line(s) for s in mine]
+        return lines
     if len(cinemas) > 1:
-        for name in cinemas[:CINEMA_LINES]:
-            mine = [s for s in shows if (s.get("cinema") or "Cinema") == name]
+        for name, mine in groups[:CINEMA_LINES]:
             formats = ", ".join(dict.fromkeys(str(s["format"]) for s in mine))
             if kind == "seats_back":
                 gained = sum(max(0, (s.get("avail") or 0) - (s.get("was") or 0)) for s in mine)
                 what = f"+{gained} seats in {plural(len(mine), 'show')}"
             else:
-                what = f"{plural(len(mine), 'new show' if kind == 'new_shows' else 'show')} from {fmt_when(mine[0]['start'])}"
-            lines.append(f"• {shorten(cinema_short(name, city), 60)} · {formats} · {what}")
+                what = plural(len(mine), "new show" if kind == "new_shows" else "show")
+            when = times_text(mine)
+            lines.append(f"• {shorten(cinema_short(name, city), 60)} · {formats} · {what}" + (f": {when}" if when else ""))
         if len(cinemas) > CINEMA_LINES:
             lines.append(f"…and {plural(len(cinemas) - CINEMA_LINES, 'more cinema')}")
         return lines
     for s in shows[:limit]:
-        lines.append(f"• {fmt_when(s['start'])} · {s['format']} · {seats_change(s)} · {fmt_price(s['price'])}")
+        lines.append(show_line(s))
     if len(shows) > limit:
         lines.append(f"…and {len(shows) - limit} more")
     return lines

@@ -410,8 +410,34 @@ class AcrossTheCity(unittest.TestCase):
         names = [f"Cinema {i}, Velachery, Chennai" for i in range(10)]
         lines = alerts.show_lines([dict(at("X", i), cinema=n) for i, n in enumerate(names)], city="chennai")
         self.assertEqual(lines[0].split(" · ")[0], "• Cinema 0, Velachery")  # the city is cut off the end
+        self.assertIn("7:00 PM", lines[0])  # still says when, even when shortened to a line per cinema
         self.assertEqual(len(lines), alerts.CINEMA_LINES + 1)
         self.assertEqual(lines[-1], "…and 2 more cinemas")
+
+    def test_a_few_shows_at_two_cinemas_are_each_listed(self):
+        from booktick import alerts
+        shows = [dict(at("Kasi", 1, avail=12), was=10), dict(at("Kasi", 1, n=2, avail=8), was=0),
+                 dict(at("AGS, Chennai", 2, avail=50), was=40)]
+        shows[1]["start"] = shows[1]["start"].replace(hour=22, minute=45)
+        lines = alerts.show_lines(shows, city="chennai", kind="seats_back")
+        self.assertEqual(lines[0], "📍 Kasi")
+        self.assertIn("7:00 PM", lines[1])
+        self.assertIn("+2 seats", lines[1])
+        self.assertIn("10:45 PM", lines[2])
+        self.assertIn("back from sold out", lines[2])
+        self.assertEqual(lines[3:5], ["", "📍 AGS"])
+        self.assertIn("+10 seats", lines[5])
+        self.assertEqual(len(lines), 6)
+
+    def test_times_in_short(self):
+        from booktick import alerts
+        shows = [at("Kasi", 1, n=i) for i in range(5)]
+        for i, s in enumerate(shows):
+            s["start"] = s["start"].replace(hour=10 + 3 * i)
+        self.assertTrue(alerts.times_text(shows).endswith("10:00 AM, 1:00 PM, 4:00 PM +2 more"))
+        shows[1]["start"] += timedelta(days=1)
+        self.assertEqual(alerts.times_text(shows[:2]).count(" AM") + alerts.times_text(shows[:2]).count(" PM"), 2)
+        self.assertEqual(alerts.times_text([dict(shows[0], start=None)]), "")
 
     def test_its_own_cinemas_arent_named_twice(self):
         self.task["cinemas"] = [{"url": "https://www.district.in/movies/ags-CD2", "name": "AGS"}]
