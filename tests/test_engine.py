@@ -74,16 +74,20 @@ class Alerts(unittest.TestCase):
         state["tasks"] = {"w_test": self.task}
         self.send = mock.patch("booktick.engine.send_task_notification", return_value=[("ntfy", True, "sent")]).start()
         mock.patch("booktick.engine.save_tasks").start()
+        # These shows are at fixed hours today; whatever the time, count them as still ahead
+        # (the tests of the day ending switch this back).
+        self.day_end = mock.patch("booktick.engine.DAY_END_MARGIN", -10 ** 9)
+        self.day_end.start()
 
     def tearDown(self):
         mock.patch.stopall()
         state["tasks"] = {}
 
-    def check(self, shows, page="page", next_round=True):
+    def check(self, shows, page="page", next_round=True, date=None):
         if next_round:
             self.task["last_alert_ts"] = 0
             self.task["settle_until"] = 0  # as if the minute after bookings opened has passed
-        engine.check_task(self.task, page, today_ist(), "PVR", shows)
+        engine.check_task(self.task, page, date or today_ist(), "PVR", shows)
 
     def kinds(self):
         return [call.kwargs["kind"] for call in self.send.call_args_list]
@@ -166,6 +170,24 @@ class Alerts(unittest.TestCase):
         self.assertEqual(self.kinds(), ["opened", "reminder"])
         self.check([show(10), show(18)])  # reminders done: now the show added in between
         self.assertEqual(self.kinds(), ["opened", "reminder", "new_shows"])
+
+    def test_the_days_last_show_starting_isnt_a_close(self):
+        self.day_end.stop()
+        started = now_ist() - timedelta(hours=1)  # its date, in case that was yesterday
+        d = str(started.date())
+        self.check([show(started.hour, started.minute, date=d)], date=d)
+        self.check([], date=d)  # it started, so District dropped it
+        self.assertEqual(self.kinds(), ["opened"])  # no "taken off sale"
+        self.assertEqual(self.task["phase"], "waiting")  # another day opening alerts like the first time
+        self.check([show(10, date=day(1))], date=day(1))
+        self.assertEqual(self.kinds(), ["opened", "opened"])
+
+    def test_shows_pulled_hours_ahead_still_close(self):
+        self.day_end.stop()
+        self.check([show(20, date=day(1))], date=day(1))
+        self.check([], date=day(1))
+        self.assertEqual(self.kinds(), ["opened", "closed"])
+        self.assertEqual(self.send.call_args.kwargs["reason"], "pulled")
 
     def test_a_restart_doesnt_make_everything_new(self):
         self.task["max_alerts"] = 1

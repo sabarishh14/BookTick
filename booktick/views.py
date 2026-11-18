@@ -481,6 +481,7 @@ CINEMA_STATES = {
     "open": ("open", lambda n: f"Open · {plural(n, 'show')}"),
     "soldout": ("soldout", lambda n: "Sold out"),
     "waiting": ("", lambda n: "Waiting"),
+    "offsale": ("soldout", lambda n: "Off sale"),
     "unchecked": ("", lambda n: "Not checked yet"),
 }
 
@@ -548,7 +549,8 @@ def city_open_html(task_id, t):
 
 ALERT_NAMES = {"opened": "Bookings open", "reopened": "Reopened", "reminder": "Reminder", "more_seats": "More seats",
                "also_open": "New cinema open", "spread": "More cinemas open", "new_shows": "New shows",
-               "seats_back": "Seats released", "closed": "Closed"}
+               "seats_back": "Seats released", "closed": "Closed", "cinema_closed": "Cinema closed",
+               "cinema_reopened": "Cinema reopened"}
 
 
 def sent_html(t, phase, tone, sent):
@@ -568,6 +570,8 @@ def sent_html(t, phase, tone, sent):
         what = ALERT_NAMES.get(r.get("kind"), "Alert")
         if r.get("kind") == "spread" and r.get("cinemas") == 1:
             what = "New cinema open"
+        if r.get("kind") in ("closed", "cinema_closed") and r.get("reason"):
+            what += " (sold out)" if r["reason"] == "sold_out" else " (off sale)"
         items.append(f'<li><time>{esc(clock_at(r["ts"]))}</time><span><b>{esc(what)}'
                      f'</b> · {place}{shows}{failed}</span></li>')
     if sent > len(log):

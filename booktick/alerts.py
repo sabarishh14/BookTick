@@ -89,6 +89,8 @@ BUTTONS = {
     "more_seats": [("Booked it, stop watching", "stop")],
     "new_shows": [("Booked it, stop watching", "stop")],
     "seats_back": [("Booked it, stop watching", "stop")],
+    "cinema_closed": [("Booked it, stop watching", "stop")],
+    "cinema_reopened": [("Booked it, stop watching", "stop"), ("Got it, keep watching", "keep")],
     "also_open": [("Booked it, stop watching", "stop"), ("Got it, keep watching", "keep")],
     "spread": [("Booked it, stop watching", "stop"), ("Got it, keep watching", "keep")],
     "closed": [("Yes, booked. Stop watching", "stop"), ("Not yet, keep watching", "keep")],
@@ -121,6 +123,15 @@ def wording(kind, name, shows, count, max_alerts, reason, place=""):
     if kind == "seats_back":
         return (f"🎟️ Seats released: {name}",
                 f"{place or 'The cinema'} released seats in {plural(len(shows), 'show')} already on sale.")
+    if kind == "cinema_closed":
+        why = ("is sold out: every matching show there is full" if reason == "sold_out"
+               else "took its shows off sale")
+        return (f"⏸️ Cinema closed: {name}",
+                f"{place or 'One of your cinemas'} {why}. Your other cinemas still have seats, and BookTick "
+                "will tell you if this one opens again.")
+    if kind == "cinema_reopened":
+        return (f"🔁 Cinema reopened: {name}",
+                f"{place or 'One of your cinemas'} has seats again. {n} with seats right now.")
     if kind == "more_seats":  # alerts from before these were split up
         return f"🎟️ More seats: {name}", "Seats just freed up in these shows:"
     if kind == "closed":
@@ -131,7 +142,8 @@ def wording(kind, name, shows, count, max_alerts, reason, place=""):
     return f"🚨 Bookings open: {name}", f"Bookings just opened{at}. {n} with seats right now."
 
 
-def send_task_notification(task, shows, place, kind="opened", count=1, max_alerts=1, reason=None, date=None, test=False):
+def send_task_notification(task, shows, place, kind="opened", count=1, max_alerts=1, reason=None, date=None, test=False,
+                           cinema_url=None):
     """Send one alert to every channel on the task. Returns [(channel, ok, detail), ...].
 
     `place` is the cinema, or "Cinemas in <city>". `kind` is opened, reopened, reminder,
@@ -150,6 +162,8 @@ def send_task_notification(task, shows, place, kind="opened", count=1, max_alert
     lines = show_lines(shows, city=task.get("city"), kind=kind)
     if shows:
         links = alert_links(shows[0])
+    elif cinema_url:  # about one cinema, with no shows to link (taken off sale there)
+        links = [("Open cinema", query_url(cinema_url, date))]
     elif task_cinemas(task) and task.get("scope") != "city":
         links = [("Open cinema", query_url(task_cinemas(task)[0]["url"], date))]
     else:

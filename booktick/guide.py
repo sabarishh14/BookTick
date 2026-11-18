@@ -49,7 +49,10 @@ GUIDE_HTML = f"""
       unblocked, or any after it was sold out. Each line says how many (at most once every {SEATS_BACK_GAP // 60} minutes).</li>
     <li><b>🗺️ Seat map</b> A few seconds later, a picture of each matching show's seats (up to {MAX_SEATMAPS}): outlined seats
       are free, grey ones are sold or blocked, and the screen is at the bottom. It's just for looking, so tapping it does nothing.</li>
-    <li><b>⏸️ Bookings closed</b> If the shows sell out or are taken off sale, BookTick tells you and keeps watching.</li>
+    <li><b>⏸️ Cinema closed · 🔁 Cinema reopened</b> Watching a few cinemas? If one sells out or takes its shows
+      off sale while others still have seats, you hear which, and again if it gets seats back.</li>
+    <li><b>⏸️ Bookings closed</b> If the shows sell out or are taken off sale everywhere you watch, BookTick tells you
+      and keeps watching. Shows that simply start (the day's last one, say) don't count as closing.</li>
     <li><b>🔁 Bookings reopened</b> If they come back after that.</li>
   </ul>
   <p class="bt-guide-after">ntfy alerts have two buttons: <span class="tag">Booked it, stop watching</span> and

@@ -1,5 +1,6 @@
 """One movie per watcher, at up to a few cinemas, in any of a few formats. No network."""
 import json
+import time
 import unittest
 from datetime import datetime, timedelta
 from unittest import mock
@@ -98,6 +99,8 @@ class Checking(unittest.TestCase):
         self.send = mock.patch("booktick.engine.send_task_notification", return_value=[]).start()
         mock.patch("booktick.engine.save_tasks").start()
         mock.patch("booktick.engine.request_seatmap").start()
+        self.day_end = mock.patch("booktick.engine.DAY_END_MARGIN", -10 ** 9)  # shows count as ahead, any hour
+        self.day_end.start()
         engine.plan([self.task], today_ist())
         self.pages = {c["url"]: engine.district.query_url(c["url"], today_ist()) for c in self.task["cinemas"]}
 
@@ -114,6 +117,56 @@ class Checking(unittest.TestCase):
     def test_one_page_per_cinema_and_day(self):
         jobs = engine.page_jobs(self.task, today_ist())
         self.assertEqual(sorted(page for _, page, _ in jobs), sorted(self.pages.values()))
+
+    def open_two(self):
+        """PVR opens, then INOX; AGS has nothing yet."""
+        self.check(PVR, [show("PVR")], "PVR Palazzo")
+        self.check(INOX, [show("INOX")], "INOX Velachery")
+        self.check(AGS, [], "AGS Villivakkam")
+        self.task["settle_until"] = 0
+        self.assertEqual(self.kinds(), ["opened", "also_open"])
+
+    def test_one_cinema_sells_out_while_another_is_open(self):
+        self.open_two()
+        self.check(PVR, [show("PVR", avail=0)], "PVR Palazzo")
+        self.assertEqual(self.kinds()[-1], "cinema_closed")
+        self.assertEqual((self.send.call_args.args[2], self.send.call_args.kwargs["reason"]), ("PVR Palazzo", "sold_out"))
+        self.check(PVR, [show("PVR", avail=6)], "PVR Palazzo")
+        self.assertEqual(self.kinds()[-1], "cinema_reopened")  # not "new cinema open": it opened before
+
+    def test_one_cinema_takes_its_shows_off_sale(self):
+        self.open_two()
+        self.check(INOX, [], "INOX Velachery")
+        self.assertEqual(self.kinds()[-1], "cinema_closed")
+        self.assertEqual(self.send.call_args.kwargs["reason"], "pulled")
+        self.assertEqual(self.send.call_args.kwargs["cinema_url"], INOX)  # links INOX, not the first cinema
+        statuses = {name: status for name, _, status, _ in engine.cinema_statuses("w1")}
+        self.assertEqual(statuses["INOX Velachery"], "offsale")
+        self.assertIn("Off sale", views.watcher_card("w1", self.task, {"owner": "o"}))
+
+    def test_seats_blinking_at_zero_dont_spam(self):
+        self.open_two()
+        self.check(PVR, [show("PVR", avail=0)], "PVR Palazzo")
+        self.check(PVR, [show("PVR", avail=1)], "PVR Palazzo")
+        self.check(PVR, [show("PVR", avail=0)], "PVR Palazzo")  # again, a minute later
+        self.check(PVR, [show("PVR", avail=1)], "PVR Palazzo")
+        self.assertEqual(self.kinds(), ["opened", "also_open", "cinema_closed", "cinema_reopened"])
+
+    def test_after_everything_closed_each_cinema_says_when_it_reopens(self):
+        self.open_two()
+        self.check(PVR, [show("PVR", avail=0)], "PVR Palazzo")
+        self.check(INOX, [show("INOX", avail=0)], "INOX Velachery")
+        self.assertEqual(self.kinds()[-1], "closed")
+        self.check(PVR, [show("PVR", avail=4)], "PVR Palazzo")
+        self.check(INOX, [show("INOX", avail=4)], "INOX Velachery")
+        self.assertEqual(self.kinds()[-2:], ["reopened", "cinema_reopened"])
+
+    def test_a_cinema_whose_shows_have_started_is_quiet(self):
+        self.open_two()
+        self.day_end.stop()
+        self.task["page_last_start"][self.pages[PVR]] = time.time() - 3600  # its last show began an hour ago
+        self.check(PVR, [], "PVR Palazzo")
+        self.assertEqual(self.kinds(), ["opened", "also_open"])  # its day ended; nothing closed
 
     def test_first_cinema_to_open_alerts_then_another_says_also_open(self):
         self.check(PVR, [show("PVR")], "PVR Palazzo")
@@ -174,6 +227,8 @@ class AnywhereAndCinemas(unittest.TestCase):
         self.send = mock.patch("booktick.engine.send_task_notification", return_value=[]).start()
         mock.patch("booktick.engine.save_tasks").start()
         mock.patch("booktick.engine.request_seatmap").start()
+        self.day_end = mock.patch("booktick.engine.DAY_END_MARGIN", -10 ** 9)  # shows count as ahead, any hour
+        self.day_end.start()
         listing = {"value": {"movies": [{"name": "Avengers: Doomsday", "url": MOVIE}]}, "age": 0}
         mock.patch("booktick.engine.district.peek", return_value=listing).start()
         engine.plan([self.task], today_ist())
@@ -241,6 +296,8 @@ class AcrossTheCity(unittest.TestCase):
         self.send = mock.patch("booktick.engine.send_task_notification", return_value=[]).start()
         mock.patch("booktick.engine.save_tasks").start()
         mock.patch("booktick.engine.request_seatmap").start()
+        self.day_end = mock.patch("booktick.engine.DAY_END_MARGIN", -10 ** 9)  # shows count as ahead, any hour
+        self.day_end.start()
         listing = {"value": {"movies": [{"name": "Avengers: Doomsday", "url": MOVIE}]}, "age": 0}
         mock.patch("booktick.engine.district.peek", return_value=listing).start()
         engine.plan([self.task], today_ist())
