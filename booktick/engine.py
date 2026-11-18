@@ -15,9 +15,9 @@ from . import district, seatmap, tracker
 from .actions import new_token
 from .alerts import alert_links, describe_results, send_seatmap, send_task_notification
 from .config import (ALERT_LOG_KEEP, CINEMA_FLAP_GAP, CITY_LIST_MAX_AGE, CITY_SPREAD_GAP, DAY_END_MARGIN, FETCH_WORKERS, KEEP_FINISHED_DAYS, MAX_BACKOFF, MAX_BLOCK_BACKOFF,
-                     MAX_SEATMAPS, MORE_SEATS_GAP, MORE_SEATS_MIN, NEW_SHOWS_GAP, SEATS_BACK_GAP, TIME_SLOTS)
-from .core import (add_log, dates_label, format_matches, now_ist, plural, shorten, state, task_cinemas, task_dates,
-                   task_formats,
+                     MAX_SEATMAPS, MORE_SEATS_GAP, NEW_SHOWS_GAP, SEATS_BACK_GAP, SEATS_MIN_DEFAULT, TIME_SLOTS)
+from .core import (add_log, dates_label, format_matches, now_ist, plural, seats_min, shorten, state, task_cinemas,
+                   task_dates, task_formats,
                    tasks_lock, to_date, today_ist, wake_engine)
 from .storage import save_tasks
 
@@ -117,11 +117,11 @@ def seat_counts(shows):
     return {s["url"]: (1 if s["avail"] is None else s["avail"]) for s in shows}
 
 
-def seats_came_back(was, show):
-    """Did a show already listed get seats back: from sold out, or MORE_SEATS_MIN more?"""
-    if was is None or show["avail"] is None:
+def seats_came_back(was, show, need=SEATS_MIN_DEFAULT):
+    """Did a show already listed get at least `need` seats back (from sold out too)? 0 means never."""
+    if need <= 0 or was is None or show["avail"] is None:
         return False
-    return (was == 0 < show["avail"]) or show["avail"] - was >= MORE_SEATS_MIN
+    return show["avail"] - was >= need
 
 
 def show_cinema(show):
@@ -271,6 +271,7 @@ def check_task(task, page, date, place, shows):
         else:
             cinema_was_open = any(n > 0 for n in (base or {}).values())
         fresh, freed = [], []
+        need = seats_min(task)
         if base is not None and phase == "open" and not settling:
             for s in open_now:
                 if city_page and (show_cinema(s) not in named(told) or show_cinema(s) in own):
@@ -279,7 +280,7 @@ def check_task(task, page, date, place, shows):
                     continue  # this cinema opening at all is its own alert
                 if s["url"] not in base:
                     fresh.append(s)
-                elif seats_came_back(base[s["url"]], s):
+                elif seats_came_back(base[s["url"]], s, need):
                     freed.append(dict(s, was=base[s["url"]]))
         quiet = task.get("reminders_left", 0) <= 0  # these wait until the reminders are done
 

@@ -9,9 +9,9 @@ from datetime import datetime, timedelta
 from . import access, district, engine, seatmap, tracker
 from .alerts import cinema_short
 from .config import (ADMIN_KEY, APP_NAME, APP_TAGLINE, AUTHOR_NAME, DATABASE_URL, GITHUB_AVATAR, GITHUB_URL,
-                     BASE_FORMATS, FORMATS, MAX_CINEMAS_PER_WATCHER, MAX_RANGE_DAYS, TIME_SLOTS)
+                     BASE_FORMATS, FORMATS, MAX_CINEMAS_PER_WATCHER, MAX_RANGE_DAYS, SEATS_MIN_CHOICES, TIME_SLOTS)
 from .core import (ago, date_is_past, dates_label, fmt_clock, fmt_price, formats_label, logs_for, now_ist, plural,
-                   shorten, state, task_cinemas, task_dates, today_ist,
+                   seats_min, seats_min_label, shorten, state, task_cinemas, task_dates, today_ist,
                    task_dates_label, tasks_lock, to_int)
 
 esc = html_lib.escape
@@ -33,6 +33,7 @@ ICONS = {
     "sun": '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>',
     "moon": '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
     "chevron-down": '<path d="m6 9 6 6 6-6"/>',
+    "edit": '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
     "chevron-left": '<path d="m15 18-6-6 6-6"/>',
     "chevron-right": '<path d="m9 18 6-6-6-6"/>',
     "clock": '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
@@ -594,6 +595,19 @@ def seatmap_link(task):
             f'{icon("seat")}Seat map when bookings opened · {esc(task.get("seatmap_at") or "")}{icon("external")}</a>')
 
 
+def seats_min_html(task_id, t):
+    """The card's "Seats released alerts" choice: picking another saves it straight away."""
+    n = seats_min(t)
+    choices = list(SEATS_MIN_CHOICES)
+    if n not in {v for _, v in choices}:  # a number set on the form's slider, in its place in the list (Off stays last)
+        choices = sorted(choices + [(seats_min_label(n), n)], key=lambda c: (c[1] == 0, c[1]))
+    options = "".join(f'<option value="{v}"{" selected" if v == n else ""}>{esc(label)}</option>' for label, v in choices)
+    return (f'<label class="bt-seatsmin" title="A show already on sale that gets this many seats back sends an alert">'
+            f'{icon("seat")}<span>Seats released alerts</span>'
+            f'<span class="bt-seatsmin-pick"><select data-bt-pick="seats" data-bt-id="{esc(task_id)}">{options}</select>'
+            f'{icon("chevron-down")}</span></label>')
+
+
 def admin_meta(task_id, task):
     """For admins: when the watcher was added, and its id (the same one the database uses)."""
     added = f"Added {esc(task.get('created_at') or '')} · " if task.get("created_at") else ""
@@ -674,6 +688,8 @@ def full_watcher_card(task_id, t, session):
         actions.append(action_button("pause", task_id, "Resume", "play", "primary", "Start checking again"))
     elif status == "Done":
         actions.append(action_button("rearm", task_id, "Re-arm", "rotate", "primary", "Reset the alert count and watch again"))
+    actions.append(f'<button type="button" class="bt-btn" data-bt-edit="{esc(task_id)}" '
+                   f'title="Change its movie, cinemas, dates, filters or alerts">{icon("edit")}<span>Edit</span></button>')
     if status in ("Active", "Paused") and sent > 0:
         actions.append(action_button("rearm", task_id, "Re-arm", "rotate", "", "Reset the alert count and watch again"))
     if status != "Expired":
@@ -703,6 +719,7 @@ def full_watcher_card(task_id, t, session):
   {seatmap_link(t)}
   {last_html}
   <div class="bt-chans">{icon("bell")}{channel_chips(t, detailed=bool(session.get("admin") or mine))}</div>
+  {seats_min_html(task_id, t) if status != "Expired" else ""}
   {admin_meta(task_id, t) if session.get("admin") else ""}
   <div class="bt-actions">{"".join(actions)}</div>
 </article>"""

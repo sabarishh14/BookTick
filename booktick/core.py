@@ -5,7 +5,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 
-from .config import DEFAULT_INTERVAL, FORMATS, MAX_LOG_LINES, MAX_RANGE_DAYS
+from .config import DEFAULT_INTERVAL, FORMATS, MAX_LOG_LINES, MAX_RANGE_DAYS, SEATS_MIN_CHOICES, SEATS_MIN_SAVED
 
 # ---------------------------------------------------------------------------
 # Time: everything is shown in Indian Standard Time
@@ -82,6 +82,17 @@ def to_int(value):
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def seats_min(task):
+    """Seats a show must get back for this watcher's "seats released" alert; 0 means it gets none."""
+    n = to_int(task.get("seats_min"))
+    return SEATS_MIN_SAVED if n is None else max(0, n)
+
+
+def seats_min_label(n):
+    """'5 or more', 'Off', or '3 or more' for a number that isn't one of the choices."""
+    return dict((v, k) for k, v in SEATS_MIN_CHOICES).get(n) or f"{n} or more"
 
 
 def to_float(value):

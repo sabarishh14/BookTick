@@ -1,6 +1,6 @@
 """The "How to use" tab: the full guide, opened from the tab bar or the header button."""
 from .config import (MAX_CINEMAS_PER_WATCHER, MAX_RANGE_DAYS, MAX_SEATMAPS, MAX_TRACKED_SHOWS, MAX_TRACKERS_PER_PERSON,
-                     MAX_WATCHERS_PER_PERSON, MORE_SEATS_MIN, NEW_SHOWS_GAP, SEATS_BACK_GAP)
+                     MAX_WATCHERS_PER_PERSON, NEW_SHOWS_GAP, SEATS_BACK_GAP, SEATS_MIN_DEFAULT)
 from .views import RESTART_TIP
 
 GUIDE_HTML = f"""
@@ -45,8 +45,11 @@ GUIDE_HTML = f"""
       when its first shows open (across a city, ones that open within a few minutes share an alert).</li>
     <li><b>🆕 New shows added</b> A cinema that's already open adds shows, like a late-night IMAX one
       (at most once every {NEW_SHOWS_GAP // 60} minutes; shows added in between come in the next one).</li>
-    <li><b>🎟️ Seats released</b> Seats come back in a show that's already listed: {MORE_SEATS_MIN} or more
-      unblocked, or any after it was sold out. Each line says how many (at most once every {SEATS_BACK_GAP // 60} minutes).</li>
+    <li><b>🎟️ Seats released</b> Seats come back in a show that's already listed, unblocked by the cinema or back
+      from sold out. The <b>Seats released alerts</b> slider sets how many seats a show must get back at once
+      ({SEATS_MIN_DEFAULT} unless you change it, 0 for none): booking for 10? Set 10, and a seat or two coming back
+      (usually someone's payment that didn't go through) won't disturb you. You can change it on the watcher's card
+      later. Each line says how many (at most once every {SEATS_BACK_GAP // 60} minutes).</li>
     <li><b>🗺️ Seat map</b> A few seconds later, a picture of each matching show's seats (up to {MAX_SEATMAPS}): outlined seats
       are free, grey ones are sold or blocked, and the screen is at the bottom. It's just for looking, so tapping it does nothing.</li>
     <li><b>⏸️ Cinema closed · 🔁 Cinema reopened</b> Watching a few cinemas? If one sells out or takes its shows
@@ -65,6 +68,9 @@ GUIDE_HTML = f"""
   <ul>
     <li>The <b>Watchers</b> tab shows each one: where bookings stand, the last check, alerts sent and where alerts go.</li>
     <li><b>Pause</b> or <b>Resume</b> checking, <b>Re-arm</b> to start over, <b>Test</b> to send a test alert, or <b>Delete</b>.</li>
+    <li><b>Edit</b> opens a watcher in the form, so you can change anything: the movie, cinemas, formats, dates, show
+      times, alerts or where they go. Changing what it looks for starts it over (a watcher that finished watches
+      again); a saved Telegram bot token or Discord webhook shows as <b>(saved)</b>, and stays unless you change it.</li>
     <li>A watcher stops by itself once its dates pass, and is removed a week later.</li>
     <li>You can have {MAX_WATCHERS_PER_PERSON} watchers going at once.</li>
   </ul>

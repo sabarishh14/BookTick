@@ -16,7 +16,7 @@ from booktick.guide import GUIDE_HTML
 from booktick.seatmap import register as register_seatmap
 from booktick.tracker import register as register_reports
 from booktick.config import (APP_NAME, DEFAULT_CINEMA_LABEL, DEFAULT_CITY, DEFAULT_URL, FORMAT_CHOICES,
-                             MAX_INTERVAL, MIN_INTERVAL)
+                             MAX_INTERVAL, MIN_INTERVAL, SEATS_MIN_DEFAULT, SEATS_MIN_MAX)
 from booktick.core import state, today_ist
 from booktick.district import city_label
 from booktick.engine import start_engine
@@ -73,6 +73,7 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
         with gr.Tab("New watcher", id="new", elem_id="tab-new"):
             with gr.Row(equal_height=False):
                 with gr.Column(min_width=340, elem_classes=["bt-stack", "bt-form"]):
+                    edit_banner = gr.HTML(visible=False, elem_id="bt-edit-banner")  # while a watcher is being edited
                     with gr.Column(elem_classes="bt-step"):
                         gr.HTML(step_head("1", "Pick your show", "The movie, then where and when you'd watch it."))
                         city_input = gr.Dropdown(
@@ -130,10 +131,19 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
                             info="The first alert plus reminders, one per check, until you tap a button in one. "
                                  "After that, BookTick still tells you if seats free up or bookings close and reopen.",
                         )
+                        seats_min_input = gr.Slider(
+                            label="Seats released alerts", minimum=0, maximum=SEATS_MIN_MAX, value=SEATS_MIN_DEFAULT,
+                            step=1,
+                            info="Once bookings are open, alert when a show already on sale gets at least this many "
+                                 "seats back at once (unblocked, or back from sold out). Booking for 10? Set 10, and "
+                                 "a seat or two coming back won't disturb you. 0 turns these alerts off.",
+                        )
                         with gr.Row(elem_classes="bt-cta-row"):
                             test_notify_btn = gr.Button("Send test alert", variant="secondary", scale=1, min_width=150,
                                                         elem_id="bt-test-btn")
                             add_task_btn = gr.Button("Start watching", variant="primary", scale=2, min_width=180)
+                        cancel_edit_btn = gr.Button("Cancel editing", variant="secondary", visible=False,
+                                                    elem_id="bt-cancel-edit")
                         add_result_lbl = gr.HTML(elem_id="bt-add-result")
 
 
@@ -244,6 +254,9 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
     formats_value = hidden_box("bt-formats-value", "[]")  # [] means any format
     action_box = hidden_box("bt-action")
     action_btn = gr.Button("Run action", elem_id="bt-action-btn", elem_classes="bt-hidden")
+    edit_box = hidden_box("bt-edit")  # the watcher whose Edit button was tapped…
+    edit_btn = gr.Button("Edit watcher", elem_id="bt-edit-btn", elem_classes="bt-hidden")
+    edit_info = hidden_box("bt-edit-info")  # …and, once it's in the form, what the page script needs to know
 
     # --- Events ---------------------------------------------------------------
     pick_inputs = [cinema_value, cin_url_input, movie_value, formats_value, slots_input, target_date_input]
@@ -269,11 +282,35 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
         h.test_user_notification, inputs=[session, user_name_input, cinema_value, cin_url_input] + channels,
         outputs=[add_result_lbl],
     )
+    # Editing a watcher fills the form in (FORM_FIELDS, in handlers.FORM_KEYS order with the
+    # city's lists after the city), and Save changes or Cancel puts back what it held before.
+    form_now = [city_input, cinema_value, cin_url_input, movie_value, formats_value, slots_input, target_date_input,
+                max_alerts_slider, seats_min_input, user_name_input] + channels
+    form_fields = [city_input, cinema_catalog, movie_catalog, cinema_info] + form_now[1:]
+    edit_mode = [edit_info, edit_banner, add_task_btn, cancel_edit_btn]
+    edit_loaded = dict(fn=None, inputs=[edit_info], js=f"(m) => ({JS} && {JS}.edit ? {JS}.edit.loaded(m) : [])")
+
+    # A js= hook gets the inputs then the outputs, and must hand back just the inputs.
+    def hold(n):
+        return f"(...a) => {{ if ({JS} && {JS}.edit) {JS}.edit.hold(); return a.slice(0, {n}); }}"
+
+    save_inputs = ([session, user_name_input] + pick_inputs[:5] + [target_date_input, max_alerts_slider, seats_min_input]
+                   + channels + [city_input])
     add_task_btn.click(
-        h.add_new_watcher,
-        inputs=[session, user_name_input] + pick_inputs[:5] + [target_date_input, max_alerts_slider] + channels,
-        outputs=[add_result_lbl, watchers_box, status_box],
-    )
+        h.save_watcher, inputs=save_inputs,
+        outputs=[add_result_lbl, watchers_box, status_box, session] + edit_mode + form_fields, js=hold(len(save_inputs)),
+    ).then(**edit_loaded)
+    edit_inputs = [edit_box, session] + form_now
+    edit_btn.click(
+        h.start_edit, inputs=edit_inputs,
+        outputs=[session] + edit_mode + [add_result_lbl] + form_fields,
+        js=f"(...a) => [{JS} && {JS}.edit ? {JS}.edit.take() : '', ...a.slice(1, {len(edit_inputs)})]",
+        show_progress="hidden",
+    ).then(**edit_loaded)
+    cancel_edit_btn.click(
+        h.cancel_edit, inputs=[session, city_input], outputs=[session] + edit_mode + [add_result_lbl] + form_fields,
+        js=hold(2),
+    ).then(**edit_loaded)
 
     tr_city.input(h.tracker_city_change, inputs=[tr_city], outputs=[tr_cinema, tr_movie])
     tr_cinema.input(h.tracker_cinema_change, inputs=[tr_city, tr_cinema], outputs=[tr_movie], show_progress="hidden")

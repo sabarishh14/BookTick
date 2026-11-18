@@ -78,6 +78,11 @@
     }
     for (const at of Array.from(b.attributes)) if (a.getAttribute(at.name) !== at.value) a.setAttribute(at.name, at.value);
     morphChildren(a, b);
+    // A dropdown someone changed ignores its "selected" attribute, so set what it shows.
+    if (a.nodeName === "SELECT") {
+      const picked = b.querySelector("option[selected]");
+      if (picked && a.value !== picked.value) a.value = picked.value;
+    }
   };
   const morphChildren = (a, b) => {
     const old = Array.from(a.childNodes), next = Array.from(b.childNodes);
@@ -191,6 +196,8 @@
     }
     const link = t.closest("[data-bt-device-link]");
     if (link) { e.preventDefault(); BT.copy(BT.deviceLink(), link); return; }
+    const edit = t.closest("[data-bt-edit]");
+    if (edit) { e.preventDefault(); BT.edit.open(edit.getAttribute("data-bt-edit")); return; }
     const a = t.closest("[data-bt-action]");
     if (!a) return;
     e.preventDefault();
@@ -202,6 +209,49 @@
     if (!ask) return run();
     BT.confirm(a, a.getAttribute("data-bt-confirm-title") || "Are you sure?", ask,
                a.getAttribute("data-bt-confirm-ok") || "Confirm").then((ok) => { if (ok) run(); });
+  });
+  // Editing a watcher: its card's Edit button has Python fill the New watcher form with it
+  // (#bt-edit-btn), then BT.edit.loaded brings the pickers up to date and shows the form. While
+  // the form is being filled in (or put back), a new city's cinema list doesn't clear the picks.
+  BT.edit = {
+    busy: false,
+    active: false,  // a watcher is in the form
+    id: "",
+    hold: () => { if (BT.edit.active) BT.edit.busy = true; },  // Save changes or Cancel puts the form back
+    open: (id) => {
+      BT.edit.id = id;
+      BT.edit.busy = true;
+      const btn = document.getElementById("bt-edit-btn");
+      if (btn) btn.click();
+    },
+    take: () => BT.edit.id || "",
+    loaded: (json) => {
+      let m = {};
+      try { m = JSON.parse(json || "{}") || {}; } catch (e) { m = {}; }
+      if (m.names && BT.cinemas && BT.cinemas.names) BT.cinemas.names(m.names);
+      if (typeof m.id === "string") BT.edit.active = !!m.id;
+      const reread = () => ["movies", "cinemas", "formats"].forEach((k) => { if (BT[k] && BT[k].reread) BT[k].reread(); });
+      reread();
+      if (BT.edit.busy) setTimeout(() => { reread(); BT.edit.busy = false; }, 600);
+      if (m.go) {
+        BT.goto("new");
+        setTimeout(() => {
+          const banner = document.getElementById("bt-edit-banner");
+          if (banner) banner.scrollIntoView({ behavior: "smooth", block: "start" });
+        }, 150);
+      }
+      return [];
+    },
+  };
+
+  // A choice on a card (like "Seats released alerts") sends "action-value:watcher_id".
+  document.addEventListener("change", (e) => {
+    const t = e.target instanceof Element ? e.target : null;
+    const pick = t && t.closest("select[data-bt-pick]");
+    if (!pick) return;
+    const card = pick.closest(".bt-card");
+    if (card) card.classList.add("is-busy");
+    BT.send(pick.getAttribute("data-bt-pick") + "-" + pick.value, pick.getAttribute("data-bt-id") || "");
   });
 
   // ---------------------------------------------------------------------------
@@ -776,6 +826,7 @@ document.addEventListener("focusin", (e) => {
 
   BT.movies = {
     refresh: () => { render(); return []; },
+    reread: () => { S.picks = null; render(); return []; },  // Python changed the picks (editing a watcher)
     picked: () => picks().slice(),
     load: (json) => {
       try { S.cat = JSON.parse(json || "null"); } catch (e) { S.cat = null; }
@@ -1003,8 +1054,10 @@ document.addEventListener("focusin", (e) => {
       let next = null;
       try { next = JSON.parse(json || "null"); } catch (e) { next = null; }
       if (next && !Array.isArray(next.cinemas)) next.cinemas = [];
-      // A different city: the cinemas picked in the last one don't carry over.
-      if (next && S.cat && S.cat.city !== next.city && picks().length) { S.picks = []; save(); }
+      // A different city: the cinemas picked in the last one don't carry over. Unless a watcher is
+      // being loaded for editing: then Python has just set the picks for this city.
+      if (BT.edit && BT.edit.busy) S.picks = null;
+      else if (next && S.cat && S.cat.city !== next.city && picks().length) { S.picks = []; save(); }
       S.cat = next;
       if (next && BT.formats) BT.formats.choices(next.formats);
       if (!render()) setTimeout(() => BT.cinemas.load(json), 200);
@@ -1022,6 +1075,8 @@ document.addEventListener("focusin", (e) => {
       return [];
     },
     refresh: () => { render(); return []; },
+    reread: () => { S.picks = null; render(); return []; },  // Python changed the picks (editing a watcher)
+    names: (map) => { Object.assign(S.names, map || {}); render(); return []; },  // cinemas not in the list
     // For the movie picker: the movies showing at the cinemas picked (null for anywhere or none).
     movieNames: () => {
       if (!S.cat || anywhere()) return null;
@@ -1131,6 +1186,7 @@ document.addEventListener("focusin", (e) => {
   BT.formats = {
     // The chips for the city picked: the usual ones, then its cinemas' screen features.
     choices: (list) => { if (Array.isArray(list) && list.length) { S.choices = list.map(String); render(); } return []; },
+    reread: () => { S.picks = null; render(); return []; },  // Python changed the picks (editing a watcher)
   };
   const wait = setInterval(() => { if (render()) clearInterval(wait); }, 200);
   setTimeout(() => clearInterval(wait), 30000);

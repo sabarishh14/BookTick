@@ -514,7 +514,7 @@ class NewWatchers(unittest.TestCase):
 
     def add(self, cinemas, movies, formats=("IMAX",), dates=None):
         return self.h.add_new_watcher({"owner": "o"}, "Me", json.dumps(cinemas), "", json.dumps(movies), list(formats), [],
-                                      dates or today_ist(), 3, "topic", "", "", "", self.request)
+                                      dates or today_ist(), 3, 5, "topic", "", "", "", self.request)
 
     def test_one_watcher_per_movie_sharing_cinemas_and_formats(self):
         msg, _, _ = self.add([PVR, INOX], ["Avengers: Doomsday", "Superhero"], formats=("IMAX", "4dx"))
@@ -524,6 +524,34 @@ class NewWatchers(unittest.TestCase):
         self.assertEqual(tasks[0]["formats"], ["IMAX", "4DX"])
         self.assertIsNot(tasks[0]["cinemas"], tasks[1]["cinemas"])  # each keeps its own cinema names
         self.assertIn("2 watchers are live", msg)
+
+    def test_seats_released_alerts_choice(self):
+        self.add([PVR], ["Avengers: Doomsday"])
+        task_id, task = next(iter(state["tasks"].items()))
+        self.assertEqual(task["seats_min"], 5)
+        card = views.watcher_card(task_id, task, {"owner": "o"})
+        self.assertIn(f'data-bt-pick="seats" data-bt-id="{task_id}"', card)
+        self.assertIn('<option value="5" selected>5 or more</option>', card)
+        with mock.patch("booktick.handlers.toast") as toast:
+            self.h.run_watcher_action(f"seats-0:{task_id}", {"owner": "o"})
+            self.assertEqual(task["seats_min"], 0)
+            self.assertIn("won't send seats released alerts", toast.call_args.args[1])
+            self.h.run_watcher_action(f"seats-1:{task_id}", {"owner": "o"})
+            self.assertEqual(task["seats_min"], 1)
+            self.assertIn("when any seat comes back", toast.call_args.args[1])
+            self.h.run_watcher_action(f"seats-25:{task_id}", {"owner": "o"})  # more than the slider goes
+            self.assertEqual(task["seats_min"], 1)
+            self.h.run_watcher_action(f"seats-2:{task_id}", {"owner": "someone else"})
+            self.assertEqual(task["seats_min"], 1)
+            self.assertFalse(toast.call_args.args[0])
+        self.assertIn('<option value="1" selected>Any seat</option>', views.watcher_card(task_id, task, {"owner": "o"}))
+        with mock.patch("booktick.handlers.toast"):
+            self.h.run_watcher_action(f"seats-8:{task_id}", {"owner": "o"})  # any number the form's slider can set
+        self.assertEqual(task["seats_min"], 8)
+        card = views.watcher_card(task_id, task, {"owner": "o"})
+        self.assertIn('<option value="5">5 or more</option><option value="8" selected>8 or more</option>'
+                      '<option value="10">10 or more</option>', card)
+        self.assertTrue(card.index('value="20"') < card.index('value="0"'))  # Off stays last
 
     def test_anywhere_in_the_city(self):
         self.add(["city:chennai"], ["Avengers: Doomsday"])
@@ -545,6 +573,135 @@ class NewWatchers(unittest.TestCase):
     def test_the_same_cinema_twice_counts_once(self):
         self.add([PVR, PVR + "?fromdate=2026-11-20"], ["Avengers: Doomsday"])
         self.assertEqual(len(next(iter(state["tasks"].values()))["cinemas"]), 1)
+
+
+@unittest.skipUnless(gradio, "Gradio isn't installed")
+class Editing(unittest.TestCase):
+    """A watcher's Edit button loads it into the form; Save changes updates it in place."""
+
+    def setUp(self):
+        from booktick import handlers
+        self.h = handlers
+        state["tasks"] = {}
+        mock.patch("booktick.handlers.save_tasks").start()
+        self.toast = mock.patch("booktick.handlers.toast").start()
+        self.request = mock.Mock(headers={"x-forwarded-for": "1.2.3.4"}, client=None)
+        self.me = {"owner": "o"}
+        handlers.add_new_watcher(self.me, "Me", json.dumps([PVR, INOX]), "", '["Avengers: Doomsday"]', ["IMAX"], [],
+                                 today_ist(), 3, 5, "topic", "123:SECRET", "42", "https://discord.com/api/webhooks/1/abcd",
+                                 self.request)
+        self.id, self.task = next(iter(state["tasks"].items()))
+        self.before = dict(city="chennai", cinema_value="[]", cin_url="", movie_value='["Other"]', formats_value="[]",
+                           slots=[], date=today_ist(), max_alerts=5, seats_min=5, name="Typed", ntfy="typed_topic",
+                           tg_token="", tg_chat="", discord="")
+
+    def tearDown(self):
+        mock.patch.stopall()
+        state["tasks"] = {}
+
+    def edit(self, session=None):
+        out = self.h.start_edit(self.id, session or self.me, *[self.before[k] for k in self.h.FORM_KEYS])
+        return out, dict(zip(self.h.FORM_KEYS[1:], out[10:]))  # after session, mode (4), result, city and its lists
+
+    def save(self, session=None, **changes):
+        _, form = self.edit(session)
+        form.update(changes)
+        f = lambda k: form[k]  # noqa: E731
+        return self.h.save_watcher(session or self.me, f("name"), f("cinema_value"), f("cin_url"), f("movie_value"),
+                                   f("formats_value"), f("slots"), f("date"), f("max_alerts"), f("seats_min"), f("ntfy"),
+                                   f("tg_token"), f("tg_chat"), f("discord"), "chennai", self.request)
+
+    def test_the_form_shows_the_watcher(self):
+        out, form = self.edit()
+        self.assertEqual(self.me["editing"], self.id)
+        self.assertTrue(json.loads(out[1])["go"])
+        self.assertEqual(out[3]["value"], "Save changes")
+        self.assertTrue(out[4]["visible"])
+        self.assertEqual(json.loads(form["cinema_value"]), [PVR, INOX])
+        self.assertEqual(json.loads(form["movie_value"]), ["Avengers: Doomsday"])
+        self.assertEqual(json.loads(form["formats_value"]), ["IMAX"])
+        self.assertEqual((form["name"], form["ntfy"], form["tg_chat"]), ("Me", "topic", "42"))
+        self.assertEqual(form["tg_token"], "(saved)")  # secrets never go back to the page
+        self.assertEqual(form["discord"], "(saved) …abcd")
+        self.assertNotIn("SECRET", json.dumps(out[1:], default=str))
+        self.assertEqual(self.me["form_before_edit"]["name"], "Typed")  # what the form held, for afterwards
+
+    def test_saving_what_it_watches_starts_it_over(self):
+        self.task.update(phase="open", seat_base={"p": {}}, alert_count=2, status="Paused")
+        tomorrow = str(now_ist().date() + timedelta(days=1))
+        out = self.save(formats_value='["4DX"]', date=tomorrow, seats_min=2)
+        self.assertIn("Saved the Avengers: Doomsday watcher", out[0])
+        self.assertIn("formats, dates, seats released alerts", out[0])
+        self.assertEqual((self.task["formats"], self.task["target_date"], self.task["seats_min"]), (["4DX"], tomorrow, 2))
+        self.assertEqual(self.task["phase"], "waiting")
+        self.assertNotIn("seat_base", self.task)
+        self.assertEqual((self.task["alert_count"], self.task["status"]), (2, "Paused"))  # history and pause stay
+        self.assertEqual(self.task["telegram_token"], "123:SECRET")  # "(saved)" kept it
+        self.assertEqual(self.task["discord_webhook"], "https://discord.com/api/webhooks/1/abcd")
+        self.assertNotIn("editing", self.me)
+        form = dict(zip(self.h.FORM_KEYS[1:], out[12:]))
+        self.assertEqual((form["name"], form["ntfy"]), ("Typed", "typed_topic"))  # the form is as it was
+
+    def test_a_new_name_or_channel_doesnt_start_it_over(self):
+        self.task.update(phase="open", seat_base={"p": {}})
+        out = self.save(name="Arun", tg_token="", tg_chat="")
+        self.assertIn("Changed: alert channels, name.", out[0])
+        self.assertEqual((self.task["phase"], self.task["user_label"]), ("open", "Arun"))
+        self.assertEqual((self.task["telegram_token"], self.task["telegram_chat_id"]), ("", ""))  # cleared: removed
+
+    def test_nothing_changed(self):
+        self.assertIn("Nothing to save", self.save()[0])
+
+    def test_where_it_looks(self):
+        self.save(cinema_value=json.dumps(["city:chennai", AGS]))
+        self.assertEqual((self.task["scope"], self.task["city"]), ("city", "chennai"))
+        self.assertEqual([c["url"] for c in self.task["cinemas"]], [AGS])
+        self.assertIn("Which movie?", self.save(cinema_value='["city:chennai"]', movie_value="[]")[0])
+        self.assertIn("One movie per watcher", self.save(movie_value='["A", "B"]')[0])
+        self.assertEqual(self.me["editing"], self.id)  # still editing after a mistake
+
+    def test_a_booked_watcher_watches_again(self):
+        self.task.update(status="Done", booked=True)
+        self.save(name="Me again")
+        self.assertEqual(self.task["status"], "Done")  # just a new name
+        self.save(date=str(now_ist().date() + timedelta(days=2)))
+        self.assertEqual((self.task["status"], self.task["booked"]), ("Active", False))
+
+    def test_only_its_owner_or_an_admin(self):
+        stranger = {"owner": "x"}
+        out, _ = self.edit(stranger)
+        self.assertNotIn("editing", stranger)
+        self.assertFalse(self.toast.call_args.args[0])
+        stranger["editing"] = self.id  # even if it tried
+        self.assertIn("That watcher is gone", self.save(stranger)[0])
+        admin = {"owner": "x", "admin": True}
+        out, _ = self.edit(admin)
+        self.assertIn("(Me&#x27;s)", out[2]["value"])
+        self.save(admin, name="Renamed")
+        self.assertEqual((self.task["user_label"], self.task["owner"]), ("Renamed", "o"))
+
+    def test_cancel_puts_the_form_back(self):
+        self.edit()
+        out = self.h.cancel_edit(self.me, "chennai")
+        self.assertNotIn("editing", self.me)
+        self.assertEqual(out[3]["value"], "Start watching")
+        form = dict(zip(self.h.FORM_KEYS[1:], out[10:]))
+        self.assertEqual((form["name"], form["movie_value"], form["tg_token"]), ("Typed", '["Other"]', ""))
+
+    def test_a_test_alert_while_editing_uses_its_saved_token(self):
+        self.edit()
+        with mock.patch("booktick.handlers.send_task_notification", return_value=[("Telegram", True, "sent")]) as send, \
+                mock.patch("booktick.handlers.access.claim_test", return_value=None):
+            self.h.test_user_notification(self.me, "Me", json.dumps([PVR]), "", "topic", "(saved)", "42", "")
+        self.assertEqual(send.call_args.args[0]["telegram_token"], "123:SECRET")
+
+    def test_a_cinema_watchers_city(self):
+        from booktick import district
+        self.assertEqual(district.city_of_cinema(PVR), "chennai")
+        cities = {"value": ["chennai", "mumbai", "navi-mumbai"], "age": 0}
+        with mock.patch("booktick.district.peek", return_value=cities):
+            self.assertEqual(district.city_of_cinema("https://www.district.in/movies/pvr-navi-mumbai-CD1"), "navi-mumbai")
+        self.assertIsNone(district.city_of_cinema("https://www.district.in/movies/somewhere-CD1"))
 
 
 if __name__ == "__main__":

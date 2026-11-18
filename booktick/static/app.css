@@ -417,6 +417,15 @@ html[data-bt-view="finished"] .bt-filter-empty[data-for="finished"] { display: b
 .bt-chans > .bt-i { font-size: 14px; }
 .bt-chan { padding: 2px 8px; border-radius: 999px; background: var(--bt-surface-2); border: 1px solid var(--bt-line); font-weight: 650; color: var(--bt-text); }
 .bt-chan.none { color: var(--bt-err); }
+.bt-seatsmin { display: flex !important; align-items: center; gap: 6px; margin: 0 !important; font-size: .78rem; color: var(--bt-muted); }
+.bt-seatsmin > .bt-i { font-size: 14px; }
+.bt-seatsmin-pick { position: relative; margin-left: auto; display: inline-flex; }
+.bt-seatsmin select { appearance: none !important; -webkit-appearance: none !important; padding: 3px 26px 3px 9px !important;
+  border-radius: 8px !important; border: 1px solid var(--bt-line) !important; background: var(--bt-surface-2) !important;
+  color: var(--bt-text) !important; font: inherit !important; font-weight: 650 !important; cursor: pointer; }
+.bt-seatsmin-pick > .bt-i { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-size: 12px;
+  color: var(--bt-muted); pointer-events: none; }
+.bt-seatsmin select:focus-visible { outline: 2px solid var(--bt-muted); outline-offset: 1px; }
 .bt-chan code, .bt-admin-meta code { font-family: var(--font-mono); font-size: .92em; overflow-wrap: anywhere; }
 .bt-admin-meta { font-size: .76rem; color: var(--bt-muted); }
 .bt-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; padding-top: 12px; border-top: 1px solid var(--bt-line); }

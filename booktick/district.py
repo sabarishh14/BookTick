@@ -490,6 +490,21 @@ def known_cinema_name(url):
     return next((c["name"] for d in lists for c in d["cinemas"] if cid and c["id"] == cid), None)
 
 
+def city_of_cinema(url):
+    """The city a cinema is in: from a city list already loaded, else from the end of its link
+    (".../pvr-palazzo-the-nexus-vijaya-mall-chennai-CD123"). None if neither says. No network."""
+    cid = cinema_id_from_url(url)
+    with _cache_lock:
+        lists = [(key[len("city:"):], hit["value"]) for key, hit in _cache.items() if key.startswith("city:")]
+    for city, directory in lists:
+        if cid and any(c.get("id") == cid for c in (directory or {}).get("cinemas") or []):
+            return city
+    slug = re.sub(r"-CD\d+$", "", str(url or "").split("?")[0].rstrip("/").split("/")[-1], flags=re.I).lower()
+    hit = peek("cities")
+    found = [c for c in (hit["value"] if hit else POPULAR_CITIES) if slug.endswith("-" + c)]
+    return max(found, key=len) if found else None
+
+
 def poster_for(name):
     """A movie's poster from the lists already loaded (cities and coming soon), or None. No network."""
     key = str(name or "").strip().lower()

@@ -19,11 +19,11 @@ from .names import name_for
 from .alerts import describe_results, sample_shows, send_task_notification
 from .config import (DEFAULT_CITY, DEFAULT_URL, MAX_CINEMA_DAYS, MAX_CINEMAS_PER_WATCHER, MAX_INTERVAL, MAX_RANGE_DAYS,
                      MAX_TRACKED_SHOWS, MIN_INTERVAL,
-                     PREVIEW_CACHE, TIME_SLOTS, TRACK_DAYS_AHEAD)
+                     PREVIEW_CACHE, SEATS_MIN_DEFAULT, SEATS_MIN_MAX, TIME_SLOTS, TRACK_DAYS_AHEAD)
 from .core import (add_log, date_label, dates_label, format_label, formats_label, json_list, log_lock, movie_list,
                    movie_text, now_ist,
-                   parse_dates, plural, shorten, state, task_cinemas, to_date,
-                   task_dates_label, tasks_lock, today_ist, wake_engine)
+                   parse_dates, plural, seats_min, seats_min_label, shorten, state, task_cinemas, task_dates,
+                   task_formats, to_date, to_int, task_dates_label, tasks_lock, today_ist, wake_engine)
 from .storage import save_tasks
 from .views import (admin_status_html, callout, city_formats, engine_note_html, esc, hint, icon,
                     logs_html, movie_catalog, show_groups, status_html, trackers_html, watcher_title, watchers_html)
@@ -330,6 +330,12 @@ def preview_html(place, shows, task, date, range_note, by, eyebrow=("pin", "Show
 # Test alerts and new watchers
 # ---------------------------------------------------------------------------
 def test_user_notification(session, user_name, cinema_value, cin_url, ntfy_top, tg_tok, tg_chat, disc_url):
+    editing = (session or {}).get("editing")
+    if editing:  # the watcher being edited: its saved token and webhook stand behind "(saved)"
+        with tasks_lock:
+            task = dict(state["tasks"].get(editing) or {})
+        if access.can_manage(session, task):
+            tg_tok, disc_url = kept_secret(tg_tok, task, "telegram_token"), kept_secret(disc_url, task, "discord_webhook")
     channels, error = clean_channels(ntfy_top, tg_tok, tg_chat, disc_url)
     if error:
         return callout("err", "Can't send a test yet", error)
@@ -350,37 +356,60 @@ def test_user_notification(session, user_name, cinema_value, cin_url, ntfy_top, 
     return callout("warn", "Some alerts didn't go through", esc(describe_results(results)))
 
 
+def read_watcher_form(session, cinema_value, cin_url, movie_names, formats, slots, date_val, max_alerts_val,
+                      seats_min_val, ntfy_top, tg_tok, tg_chat, disc_url):
+    """The watcher form, checked: (settings, [movies], None), or (None, None, (title, body)) when
+    something needs fixing. The settings are everything but the movie and the name."""
+    movies = movie_list(movie_names)
+    try:
+        city, links, why = watch_targets(cinema_value, cin_url)
+    except ValueError as e:
+        return None, None, ("Which city?", esc(str(e)))
+    if why:
+        return None, None, ("Which cinema?", esc(why))
+    if city and not movies:
+        return None, None, ("Which movie?", "Pick the movie to watch across the city.")
+    dates = parse_dates(date_val)
+    if not dates:
+        return None, None, ("Pick show dates", f"Choose a day, or up to {MAX_RANGE_DAYS} days in a row.")
+    if dates[1] < today_ist():
+        return None, None, ("Pick a date from today on", "That date has already passed.")
+    first_day = max(dates[0], today_ist())
+    if links and not session.get("admin"):
+        days = (to_date(dates[1]) - to_date(first_day)).days + 1
+        if len(links) * days > MAX_CINEMA_DAYS:
+            return None, None, ("That's a lot to keep checking",
+                                f"{plural(len(links), 'cinema')} × {plural(days, 'day')} is {len(links) * days} "
+                                f"cinema-days, and a watcher can check up to {MAX_CINEMA_DAYS}. Pick fewer cinemas or days.")
+    channels, error = clean_channels(ntfy_top, tg_tok, tg_chat, disc_url)
+    if error:
+        return None, None, ("Where should we alert you?", error)
+    settings = dict(
+        channels,
+        scope="city" if city else "cinema",
+        city=city,
+        cinemas=[{"url": link, "name": cinema_name(link)} for link in links],
+        target_date=first_day,
+        target_date_to=dates[1],
+        formats=picked_formats(formats),
+        time_slots=[s for s in (slots or []) if s in dict(SLOT_CHOICES).values()],
+        max_alerts=int(max_alerts_val or 5),
+        seats_min=seats_min_choice(seats_min_val),
+    )
+    return settings, movies, None
+
+
 def add_new_watcher(session, user_name, cinema_value, cin_url, movie_names, formats, slots, date_val, max_alerts_val,
-                    ntfy_top, tg_tok, tg_chat, disc_url, request: gr.Request):
+                    seats_min_val, ntfy_top, tg_tok, tg_chat, disc_url, request: gr.Request):
     """One watcher per movie picked, each following the same cinemas, formats and dates."""
     session = session or {}
     fail = lambda title, body: (callout("err", title, body), keep(), keep())  # noqa: E731
     if not session.get("owner"):
         return fail("Reload the page", "BookTick couldn't tell which watchers are yours. Reload and try again.")
-    movies = movie_list(movie_names)
-    try:
-        city, links, why = watch_targets(cinema_value, cin_url)
-    except ValueError as e:
-        return fail("Which city?", esc(str(e)))
-    if why:
-        return fail("Which cinema?", esc(why))
-    if city and not movies:
-        return fail("Which movie?", "Pick the movie to watch across the city.")
-    dates = parse_dates(date_val)
-    if not dates:
-        return fail("Pick show dates", f"Choose a day, or up to {MAX_RANGE_DAYS} days in a row.")
-    if dates[1] < today_ist():
-        return fail("Pick a date from today on", "That date has already passed.")
-    first_day = max(dates[0], today_ist())
-    if links and not session.get("admin"):
-        days = (to_date(dates[1]) - to_date(first_day)).days + 1
-        if len(links) * days > MAX_CINEMA_DAYS:
-            return fail("That's a lot to keep checking",
-                        f"{plural(len(links), 'cinema')} × {plural(days, 'day')} is {len(links) * days} cinema-days, and a "
-                        f"watcher can check up to {MAX_CINEMA_DAYS}. Pick fewer cinemas or days.")
-    channels, error = clean_channels(ntfy_top, tg_tok, tg_chat, disc_url)
+    settings, movies, error = read_watcher_form(session, cinema_value, cin_url, movie_names, formats, slots, date_val,
+                                                max_alerts_val, seats_min_val, ntfy_top, tg_tok, tg_chat, disc_url)
     if error:
-        return fail("Where should we alert you?", error)
+        return fail(*error)
     network = access.network_id(request)
     limit = access.watcher_limit_error(session, network, count=max(1, len(movies)))
     if limit:
@@ -388,26 +417,18 @@ def add_new_watcher(session, user_name, cinema_value, cin_url, movie_names, form
                     esc(limit))
 
     name = shorten((user_name or "").strip() or name_for(session["owner"]), 40)
-    cinemas = [{"url": link, "name": cinema_name(link)} for link in links]
-    formats = picked_formats(formats)
+    city, cinemas = settings["city"], settings["cinemas"]
     now = time.time()
     created = []
     for i, movie in enumerate(movies or [""]):
         task = dict(
-            channels,
+            settings,
             id="w_" + uuid.uuid4().hex[:10],
             owner=session["owner"],
             network=network,
             user_label=name,
-            scope="city" if city else "cinema",
-            city=city,
             cinemas=[dict(c) for c in cinemas],
-            target_date=first_day,
-            target_date_to=dates[1],
             movie_filter=movie,
-            formats=formats,
-            time_slots=[s for s in (slots or []) if s in dict(SLOT_CHOICES).values()],
-            max_alerts=int(max_alerts_val or 5),
             alert_count=0,
             status="Active",
             phase="waiting",  # waiting for bookings to open; then open, closed, open again…
@@ -448,6 +469,217 @@ def add_new_watcher(session, user_name, cinema_value, cin_url, movie_names, form
 
 
 # ---------------------------------------------------------------------------
+# Editing a watcher. Its card's Edit button loads it into the New watcher form (what the form
+# held is put aside, and comes back afterwards); Save changes then updates it in place.
+# ---------------------------------------------------------------------------
+SAVED = "(saved)"  # the form's stand-in for a bot token or webhook kept from before: those never go back to the page
+# What a watcher looks for. Changing any of these starts it over (as if re-armed).
+FRESH_KEYS = ("page_seats", "told_cinemas", "told_quiet_until", "city_open", "seat_base", "seen_open", "closed_cinemas",
+              "cinema_alert_ts", "open_places", "page_last_start", "expected_pages", "also_open_ts", "last_spread_ts",
+              "last_new_ts", "last_more_ts", "settle_until")
+# The form's fields, in the order app.py lists them (FORM_FIELDS there): what's put aside, and what's filled in.
+FORM_KEYS = ("city", "cinema_value", "cin_url", "movie_value", "formats_value", "slots", "date", "max_alerts", "seats_min",
+             "name", "ntfy", "tg_token", "tg_chat", "discord")
+FORM_OUTPUTS = len(FORM_KEYS) + 3  # filling it in also sends the city's cinemas, its movies and a note
+
+
+def kept_secret(value, task, key):
+    """The bot token or webhook to save: the watcher's own when the form still shows the stand-in."""
+    value = (value or "").strip()
+    return (task or {}).get(key) or "" if value.startswith(SAVED) else value
+
+
+def watcher_city(task, fallback):
+    """The city to show a watcher's cinemas from: its own, or the one its first cinema is in."""
+    if task.get("scope") == "city" and task.get("city"):
+        return task["city"]
+    cinemas = task_cinemas(task)
+    return (district.city_of_cinema(cinemas[0]["url"]) if cinemas else None) or fallback
+
+
+def watcher_form_values(task, fallback_city):
+    """A watcher's settings as the form shows them (FORM_KEYS)."""
+    city = watcher_city(task, fallback_city)
+    picks = ([CITY_PREFIX + task["city"]] if task.get("scope") == "city" and task.get("city") else [])
+    picks += [c["url"] for c in task_cinemas(task)]
+    start, end = task_dates(task)[0], task_dates(task)[-1]
+    start = max(start, today_ist())
+    token, hook = task.get("telegram_token") or "", task.get("discord_webhook") or ""
+    return {
+        "city": city, "cinema_value": json.dumps(picks), "cin_url": "",
+        "movie_value": json.dumps([task["movie_filter"]] if task.get("movie_filter") else []),
+        "formats_value": json.dumps(task_formats(task)),
+        "slots": [s for s in (task.get("time_slots") or []) if s in dict(SLOT_CHOICES).values()],
+        "date": start if start >= end else f"{start}..{end}",
+        "max_alerts": max(1, min(20, to_int(task.get("max_alerts")) or 5)),
+        "seats_min": seats_min(task),
+        "name": task.get("user_label") or "",
+        "ntfy": task.get("ntfy_topic") or "", "tg_token": SAVED if token else "",
+        "tg_chat": task.get("telegram_chat_id") or "", "discord": f"{SAVED} …{hook[-4:]}" if hook else "",
+    }
+
+
+def form_updates(values, current_city):
+    """The form filled with `values` (FORM_KEYS), as app.py's FORM_FIELDS updates: the city's
+    cinema and movie lists come too when it's another city."""
+    if not values:
+        values = {}
+    city = values.get("city")
+    if city and city != current_city:
+        cinemas, movies, info, _ = on_city_change(city)
+        head = (city, cinemas, movies, info)
+    else:
+        head = (keep(), keep(), keep(), keep())
+    return head + tuple(values[k] if k in values else keep() for k in FORM_KEYS[1:])
+
+
+def form_mode(session, task=None, go=False):
+    """(edit info for the page script, banner, Save/Start button, Cancel button) for editing `task`, or not."""
+    if task is None:
+        return (json.dumps({"id": "", "go": False}), gr.update(value="", visible=False),
+                gr.update(value="Start watching"), gr.update(visible=False))
+    names = {district.cinema_id_from_url(c["url"]): engine.cinema_label(c) for c in task_cinemas(task)}
+    whose = "" if task.get("owner") == session.get("owner") else f" ({task.get('user_label') or 'someone'}'s)"
+    banner = callout("info", f"Editing the {esc(watcher_title(task))} watcher{esc(whose)}",
+                     "Change anything below, then tap <b>Save changes</b>. Changing the movie, cinemas, formats, show "
+                     "times or dates starts it over, so if bookings are already open you hear straight away.")
+    return (json.dumps({"id": task["id"], "go": go, "names": names}), gr.update(value=banner, visible=True),
+            gr.update(value="Save changes"), gr.update(visible=True))
+
+
+def start_edit(task_id, session, *form):
+    """The card's Edit button: load the watcher into the form. `form` is what the form holds now
+    (FORM_KEYS), put aside until editing ends."""
+    session = session if session is not None else {}
+    with tasks_lock:
+        task = state["tasks"].get(task_id)
+        task = dict(task) if task else None
+    if not access.can_manage(session, task) or tracker.is_tracker(task):
+        toast(False, "That watcher no longer exists.")
+        return (session, json.dumps({"id": "", "go": False})) + (keep(),) * (4 + FORM_OUTPUTS)
+    if not session.get("editing"):
+        session["form_before_edit"] = dict(zip(FORM_KEYS, form))
+    session["editing"] = task_id
+    values = watcher_form_values(task, form[0])
+    return ((session,) + form_mode(session, dict(task, id=task_id), go=True) + ("",)
+            + form_updates(values, form[0]))
+
+
+def leave_edit(session, current_city):
+    """Back to adding watchers, with the form as it was before editing."""
+    session.pop("editing", None)
+    before = session.pop("form_before_edit", None) or {"tg_token": "", "discord": ""}  # never leave a stand-in behind
+    for key in ("tg_token", "discord"):
+        if str(before.get(key) or "").startswith(SAVED):
+            before[key] = ""
+    return form_mode(session, None), form_updates(before, current_city)
+
+
+def cancel_edit(session, current_city):
+    session = session if session is not None else {}
+    mode, form = leave_edit(session, current_city)
+    return (session,) + mode + ("",) + form
+
+
+CHANGE_LABELS = [
+    ("movie", lambda t: str(t.get("movie_filter") or "").strip().lower()),
+    ("cinemas", lambda t: (t.get("scope"), t.get("city") if t.get("scope") == "city" else None,
+                         sorted(district.cinema_id_from_url(c["url"]) or c["url"] for c in task_cinemas(t)))),
+    ("formats", lambda t: sorted(f.lower() for f in task_formats(t))),
+    ("show times", lambda t: sorted(t.get("time_slots") or [])),
+    ("dates", lambda t: (max(task_dates(t)[0], today_ist()), task_dates(t)[-1])),
+    ("alerts when bookings open", lambda t: to_int(t.get("max_alerts"))),
+    ("seats released alerts", lambda t: seats_min(t)),
+    ("alert channels", lambda t: tuple(t.get(k) or "" for k in ("ntfy_topic", "telegram_token", "telegram_chat_id",
+                                                                  "discord_webhook"))),
+    ("name", lambda t: t.get("user_label") or ""),
+]
+WATCH_CHANGES = {"movie", "cinemas", "formats", "show times", "dates"}
+
+
+def edit_watcher(task_id, session, user_name, cinema_value, cin_url, movie_names, formats, slots, date_val,
+                 max_alerts_val, seats_min_val, ntfy_top, tg_tok, tg_chat, disc_url, current_city, request):
+    """Save changes: (result, watchers, status, session, edit info, banner, Save button, Cancel button, *form)."""
+    stay = (json.dumps({"id": task_id, "go": False}),) + (keep(),) * (3 + FORM_OUTPUTS)  # still editing
+    fail = lambda title, body: (callout("err", title, body), keep(), keep(), session) + stay  # noqa: E731
+    with tasks_lock:
+        task = state["tasks"].get(task_id)
+        task = dict(task) if task else None
+    if not access.can_manage(session, task) or tracker.is_tracker(task):
+        return fail("That watcher is gone", "It may have been deleted. Tap <b>Cancel</b> to add a new one instead.")
+    settings, movies, error = read_watcher_form(
+        session, cinema_value, cin_url, movie_names, formats, slots, date_val, max_alerts_val, seats_min_val,
+        ntfy_top, kept_secret(tg_tok, task, "telegram_token"), tg_chat, kept_secret(disc_url, task, "discord_webhook"))
+    if error:
+        return fail(*error)
+    if len(movies) > 1:
+        return fail("One movie per watcher", "This watcher follows one movie. To watch another as well, save this one, "
+                                             "then add a new watcher for it.")
+    names = {district.cinema_id_from_url(c["url"]): c.get("name") for c in task_cinemas(task)}
+    for c in settings["cinemas"]:  # keep the names it had (a name from the URL is only a guess)
+        c["name"] = names.get(district.cinema_id_from_url(c["url"])) or c["name"]
+    label = shorten((user_name or "").strip() or task.get("user_label") or name_for(task.get("owner") or ""), 40)
+    after = dict(task, **settings, movie_filter=movies[0] if movies else "", user_label=label)
+    for key in ("cinema_url", "cinema_name", "format_filter"):  # how watchers from before kept these
+        after.pop(key, None)
+    changed = [what for what, read in CHANGE_LABELS if read(task) != read(after)]
+    restart = bool(WATCH_CHANGES & set(changed))
+    revive = restart and task.get("status") in ("Done", "Expired")
+    if revive:
+        limit = access.watcher_limit_error(session, task.get("network"))
+        if limit:
+            return fail("Can't start it again yet", esc(limit))
+
+    with tasks_lock:
+        live = state["tasks"].get(task_id)
+        if live is None:
+            return fail("That watcher is gone", "It was deleted while you were editing it.")
+        for key in ("cinema_url", "cinema_name", "format_filter"):
+            live.pop(key, None)
+        live.update({k: after[k] for k in list(settings) + ["movie_filter", "user_label"]})
+        if restart:
+            for key in FRESH_KEYS:
+                live.pop(key, None)
+            live.update(phase="waiting", reminders_left=0, last_result="", last_checked="", last_checked_ts=None)
+            if revive:
+                live.update(status="Active", booked=False)
+        if changed:
+            save_tasks()
+    if restart:
+        wake_engine.set()
+
+    title = watcher_title(after)
+    if changed:
+        add_log(f"✏️ [{label}] edited the {title} watcher: {', '.join(changed)}.", (task.get("owner"),))
+    see = '<button type="button" class="bt-link" data-bt-goto="watchers">See it in Watchers' + icon("arrow") + "</button>"
+    if not changed:
+        msg = callout("info", "Nothing to save", f"The {esc(title)} watcher already had these settings. {see}")
+    else:
+        note = (" It starts over with these, so if bookings are already open you hear straight away."
+                if restart and live.get("status") == "Active" else "")
+        msg = callout("ok", f"Saved the {esc(title)} watcher", f"Changed: {esc(', '.join(changed))}.{note} {see}")
+    mode, form = leave_edit(session, current_city)
+    session.setdefault("sent", {}).pop("watchers", None)
+    session["sent"].pop("status", None)
+    return ((msg, fresh(session, "watchers", watchers_html(session)), fresh(session, "status", status_html(session)),
+             session) + mode + form)
+
+
+def save_watcher(session, user_name, cinema_value, cin_url, movie_names, formats, slots, date_val, max_alerts_val,
+                 seats_min_val, ntfy_top, tg_tok, tg_chat, disc_url, current_city, request: gr.Request):
+    """The form's main button: Start watching, or Save changes while a watcher is being edited.
+    Returns (result, watchers, status, session, edit info, banner, Save button, Cancel button, *form)."""
+    session = session if session is not None else {}
+    if session.get("editing"):
+        return edit_watcher(session["editing"], session, user_name, cinema_value, cin_url, movie_names, formats, slots,
+                            date_val, max_alerts_val, seats_min_val, ntfy_top, tg_tok, tg_chat, disc_url, current_city,
+                            request)
+    result = add_new_watcher(session, user_name, cinema_value, cin_url, movie_names, formats, slots, date_val,
+                             max_alerts_val, seats_min_val, ntfy_top, tg_tok, tg_chat, disc_url, request)
+    return result + (session,) + (keep(),) * (4 + FORM_OUTPUTS)
+
+
+# ---------------------------------------------------------------------------
 # Buttons on the watcher cards, and the engine
 # ---------------------------------------------------------------------------
 def describe(task):
@@ -475,17 +707,39 @@ def rearm_watcher(task):
         return False, "This watcher's dates have passed. Create a new one instead."
     task.update(alert_count=0, status="Active", phase="waiting", reminders_left=0, booked=False, last_result="",
                 last_checked="", last_checked_ts=None, last_alert_ts=0)
-    for key in ("page_seats", "told_cinemas", "told_quiet_until", "city_open", "alert_log", "seat_base",
-                "seen_open", "closed_cinemas", "cinema_alert_ts", "open_places", "page_last_start"):
+    for key in FRESH_KEYS + ("alert_log",):
         task.pop(key, None)  # start fresh, so bookings that are open now alert again
     add_log(f"🔄 [{task.get('user_label')}] re-armed: alert count reset and watching again.", (task.get("owner"),))
     return True, f"Re-armed the {watcher_title(task)} watcher. It's watching again."
 
 
+def seats_min_choice(value, fallback=SEATS_MIN_DEFAULT):
+    """The "Seats released alerts" number, from the form's slider or a card: 0 (off) to SEATS_MIN_MAX."""
+    n = to_int(value)
+    return n if n is not None and 0 <= n <= SEATS_MIN_MAX else fallback
+
+
+def set_seats_min(task, value):
+    n = seats_min_choice(value, None)
+    if n is None:
+        return False, f"Pick 0 to {SEATS_MIN_MAX} seats."
+    task["seats_min"] = n
+    title = watcher_title(task)
+    if n == 0:
+        text = f"The {title} watcher won't send seats released alerts."
+    else:
+        come = "any seat comes" if n == 1 else f"{n} or more seats come"
+        text = f"The {title} watcher sends a seats released alert when {come} back in a show."
+    add_log(f"🎟️ [{task.get('user_label')}] seats released alerts: {seats_min_label(n).lower()}.", (task.get("owner"),))
+    return True, text
+
+
 def run_watcher_action(payload, session):
-    """Handles the buttons inside the HTML cards (they send 'action:watcher_id')."""
+    """Handles the buttons inside the HTML cards (they send 'action:watcher_id'; a choice made
+    on a card, 'action-value:watcher_id')."""
     session = session or {}
     action, _, task_id = str(payload or "").partition(":")
+    action, _, value = action.partition("-")
     if action == "engine":
         if not session.get("admin"):
             toast(False, "Only the admin can pause checking for everyone.")
@@ -494,15 +748,20 @@ def run_watcher_action(payload, session):
         session.get("sent", {}).clear()
         views = live_views(session)
         return (session,) + views[:2] + (engine_note_html(session), engine_button(), views[3])
-    if action not in ("pause", "rearm", "delete", "test"):
+    if action not in ("pause", "rearm", "delete", "test", "seats"):
         return (session, keep(), keep(), keep(), keep(), keep())
 
     with tasks_lock:
         task = state["tasks"].get(task_id)
         if not access.can_manage(session, task):
             ok, msg, snapshot = False, "That no longer exists.", None
-        elif tracker.is_tracker(task) and action in ("rearm", "test"):
+        elif tracker.is_tracker(task) and action in ("rearm", "test", "seats"):
             ok, msg, snapshot = False, "Trackers can only be paused, resumed or deleted.", None
+        elif action == "seats":
+            ok, msg = set_seats_min(task, value)
+            if ok:
+                save_tasks()
+            snapshot = None
         elif action == "delete":
             del state["tasks"][task_id]
             save_tasks()

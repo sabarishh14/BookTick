@@ -70,7 +70,8 @@ class Alerts(unittest.TestCase):
     def setUp(self):
         self.task = {"id": "w_test", "owner": "o", "user_label": "T", "status": "Active", "scope": "cinema",
                      "cinema_url": "https://www.district.in/movies/x-CD1", "movie_filter": "Ramayana",
-                     "format_filter": "IMAX", "time_slots": [], "target_date": today_ist(), "max_alerts": 2, "alert_count": 0}
+                     "format_filter": "IMAX", "time_slots": [], "target_date": today_ist(), "max_alerts": 2, "alert_count": 0,
+                     "seats_min": engine.SEATS_MIN_DEFAULT}
         state["tasks"] = {"w_test": self.task}
         self.send = mock.patch("booktick.engine.send_task_notification", return_value=[("ntfy", True, "sent")]).start()
         mock.patch("booktick.engine.save_tasks").start()
@@ -142,9 +143,38 @@ class Alerts(unittest.TestCase):
     def test_back_from_sold_out(self):
         self.task["max_alerts"] = 1
         self.check([show(10), show(18, avail=0)])
-        self.check([show(10), show(18, avail=3)])
+        self.check([show(10), show(18, avail=1)])  # a seat or two: a payment that didn't go through
+        self.check([show(10), show(18, avail=0)])
+        self.assertEqual(self.kinds(), ["opened"])
+        self.check([show(10), show(18, avail=6)])
         self.assertEqual(self.kinds(), ["opened", "seats_back"])
         self.assertEqual(self.shows_sent()[0]["was"], 0)
+
+    def test_the_watchers_own_minimum(self):
+        self.task.update(max_alerts=1, seats_min=1)
+        self.check([show(10), show(18, avail=0)])
+        self.check([show(10), show(18, avail=1)])
+        self.assertEqual(self.kinds(), ["opened", "seats_back"])
+        self.task.update(seats_min=20, last_more_ts=0)
+        self.check([show(10), show(18, avail=15)])  # 14 more: not 20
+        self.assertEqual(self.kinds(), ["opened", "seats_back"])
+        self.check([show(10), show(18, avail=40)])
+        self.assertEqual(self.kinds(), ["opened", "seats_back", "seats_back"])
+
+    def test_seats_released_alerts_off(self):
+        self.task.update(max_alerts=1, seats_min=0)
+        self.check([show(10), show(18, avail=0)])
+        self.check([show(10, avail=200), show(18, avail=100)])
+        self.assertEqual(self.kinds(), ["opened"])
+        self.check([show(10, avail=200), show(18, avail=100), show(21)])  # new shows still alert
+        self.assertEqual(self.kinds(), ["opened", "new_shows"])
+
+    def test_minimum_from_what_was_saved(self):
+        from booktick.core import seats_min
+        self.assertEqual(seats_min({}), 1)  # watchers from before the choice keep alerting for any seat
+        self.assertEqual(seats_min({"seats_min": "10"}), 10)
+        self.assertEqual(seats_min({"seats_min": None}), 1)
+        self.assertEqual(seats_min({"seats_min": 0}), 0)
 
     def test_shows_added_while_waiting_come_in_the_next_alert(self):
         self.task["max_alerts"] = 1

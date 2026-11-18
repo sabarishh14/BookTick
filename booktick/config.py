@@ -29,7 +29,11 @@ MAX_BACKOFF = 600            # longest wait before retrying a page that keeps fa
 MAX_BLOCK_BACKOFF = 1800     # longest pause for everyone when District turns requests away
 MAX_RANGE_DAYS = 7           # longest date range one watcher can cover
 KEEP_FINISHED_DAYS = 7       # finished watchers are removed this many days after their last date
-MORE_SEATS_MIN = 10          # seats a show must gain before a "seats released" alert (or any, if it was sold out)
+SEATS_MIN_DEFAULT = 5        # seats a show must get back (from sold out too) for a "seats released" alert…
+SEATS_MIN_SAVED = 1          # watchers saved before there was a choice keep alerting for any seat
+SEATS_MIN_MAX = 20           # …or what the watcher sets, 0 (off) to this; a seat or two back is usually a failed payment
+SEATS_MIN_CHOICES = [("Any seat", 1), ("2 or more", 2), ("5 or more", 5), ("10 or more", 10), ("20 or more", 20),
+                     ("Off", 0)]  # the quick picks on a watcher's card
 MORE_SEATS_GAP = 900         # a cinema that opens, closes and opens again is announced at most this often
 SEATS_BACK_GAP = 600         # "seats released" alerts at most this often per watcher (what comes between waits)
 NEW_SHOWS_GAP = 180          # "new shows" alerts at most this often per watcher (shows added between wait too)
