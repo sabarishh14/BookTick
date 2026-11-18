@@ -11,7 +11,7 @@ from booktick.core import IST, now_ist, state, today_ist
 def show(hour, minute=0, title="Ramayana", fmt="IMAX 2D", avail=10, date=None):
     d = datetime.strptime(date or today_ist(), "%Y-%m-%d").replace(hour=hour, minute=minute, tzinfo=IST)
     return {"title": title, "cinema": "PVR", "format": fmt, "start": d, "audi": "", "avail": avail,
-            "total": 100, "price": 200.0, "url": "https://www.district.in/x"}
+            "total": 100, "price": 200.0, "url": f"https://www.district.in/x?s={hour}{minute:02d}"}
 
 
 def day(n):
@@ -82,6 +82,7 @@ class Alerts(unittest.TestCase):
     def check(self, shows, page="page", next_round=True):
         if next_round:
             self.task["last_alert_ts"] = 0
+            self.task["settle_until"] = 0  # as if the minute after bookings opened has passed
         engine.check_task(self.task, page, today_ist(), "PVR", shows)
 
     def kinds(self):
@@ -120,13 +121,58 @@ class Alerts(unittest.TestCase):
         self.check([])
         self.assertEqual(self.send.call_args_list[-1].kwargs["reason"], "pulled")
 
-    def test_more_seats_after_the_reminders(self):
+    def shows_sent(self):
+        return self.send.call_args.args[1]
+
+    def test_seats_released_then_a_new_show(self):
         self.task["max_alerts"] = 1
         self.check([show(10, avail=2)])
         self.check([show(10, avail=5)])   # only 3 more: not enough
         self.check([show(10, avail=40)])  # 35 more
-        self.check([show(10, avail=40), show(18, title="Ramayana")])  # a new show, but too soon after the last
-        self.assertEqual(self.kinds(), ["opened", "more_seats"])
+        self.assertEqual(self.kinds(), ["opened", "seats_back"])
+        self.assertEqual((self.shows_sent()[0]["was"], self.shows_sent()[0]["avail"]), (5, 40))
+        self.check([show(10, avail=40), show(18)])  # a show added at a cinema that's already open
+        self.assertEqual(self.kinds(), ["opened", "seats_back", "new_shows"])
+        self.assertEqual([s["start"].hour for s in self.shows_sent()], [18])
+
+    def test_back_from_sold_out(self):
+        self.task["max_alerts"] = 1
+        self.check([show(10), show(18, avail=0)])
+        self.check([show(10), show(18, avail=3)])
+        self.assertEqual(self.kinds(), ["opened", "seats_back"])
+        self.assertEqual(self.shows_sent()[0]["was"], 0)
+
+    def test_shows_added_while_waiting_come_in_the_next_alert(self):
+        self.task["max_alerts"] = 1
+        self.check([show(10)])
+        self.check([show(10), show(18)])
+        self.check([show(10), show(18), show(21)])  # a minute later: too soon for another
+        self.assertEqual(self.kinds(), ["opened", "new_shows"])
+        self.task["last_new_ts"] -= engine.NEW_SHOWS_GAP
+        self.check([show(10), show(18), show(21)])
+        self.assertEqual(self.kinds(), ["opened", "new_shows", "new_shows"])
+        self.assertEqual([s["start"].hour for s in self.shows_sent()], [21])  # not lost, and 18:00 not repeated
+
+    def test_the_minute_after_opening_is_all_just_open(self):
+        self.task["max_alerts"] = 1
+        self.check([show(10)])
+        self.check([show(10), show(18)], next_round=False)  # still settling: part of the opening
+        self.check([show(10), show(18)])
+        self.assertEqual(self.kinds(), ["opened"])
+
+    def test_no_new_show_alerts_during_the_reminders(self):
+        self.check([show(10)])
+        self.check([show(10), show(18)])
+        self.assertEqual(self.kinds(), ["opened", "reminder"])
+        self.check([show(10), show(18)])  # reminders done: now the show added in between
+        self.assertEqual(self.kinds(), ["opened", "reminder", "new_shows"])
+
+    def test_a_restart_doesnt_make_everything_new(self):
+        self.task["max_alerts"] = 1
+        self.check([show(10)])
+        self.task.pop("seat_base")  # not stored: gone after a restart
+        self.check([show(10), show(18)])
+        self.assertEqual(self.kinds(), ["opened"])
 
     def test_closed_only_once_every_date_has_reported(self):
         self.task["expected_pages"] = ["day1", "day2"]

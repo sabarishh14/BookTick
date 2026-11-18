@@ -71,6 +71,21 @@ class Fields(unittest.TestCase):
         self.assertEqual(access.saved_defaults(json.dumps({"name": "", "ntfy": "bad topic!"})), ("", ""))
         self.assertEqual(access.saved_defaults("not json"), ("", ""))
 
+    def test_messages_say_what_happened(self):
+        from booktick import alerts
+        s = dict(show("PVR"), was=5, avail=40)
+        head, intro = alerts.wording("seats_back", "Avengers", [s], 1, 1, None, place="PVR Palazzo")
+        self.assertEqual(head, "🎟️ Seats released: Avengers")
+        self.assertIn("PVR Palazzo released seats in 1 show", intro)
+        self.assertIn("+35 seats · 40 of 300 seats left", alerts.show_lines([s])[0])
+        self.assertIn("back from sold out", alerts.show_lines([dict(s, was=0)])[0])
+        head, intro = alerts.wording("new_shows", "Avengers", [s, s], 1, 1, None, place="PVR Palazzo")
+        self.assertEqual(head, "🆕 New shows added: Avengers")
+        self.assertIn("PVR Palazzo added 2 new shows", intro)
+        head, intro = alerts.wording("also_open", "Avengers", [s], 1, 1, None, place="INOX Velachery")
+        self.assertEqual(head, "🏛️ New cinema open: Avengers")
+        self.assertIn("INOX Velachery just opened bookings for the first time", intro)
+
     def test_picked_movies(self):
         self.assertEqual(movie_list('["Avengers: Doomsday", "Superhero", "Superhero", " "]'), ["Avengers: Doomsday", "Superhero"])
 
@@ -111,6 +126,15 @@ class Checking(unittest.TestCase):
         self.assertEqual(self.send.call_args.args[2], "INOX Velachery")
         statuses = {name: status for name, _, status, _ in engine.cinema_statuses("w1")}
         self.assertEqual(statuses, {"PVR Palazzo": "open", "INOX Velachery": "open", "AGS Villivakkam": "waiting"})
+
+    def test_a_cinema_already_open_adds_a_show(self):
+        self.check(PVR, [show("PVR")], "PVR Palazzo")
+        self.task["settle_until"] = 0
+        self.check(INOX, [], "INOX Velachery")
+        self.check(PVR, [show("PVR"), show("PVR", n=2, hour=22)], "PVR Palazzo")
+        self.assertEqual(self.kinds(), ["opened", "new_shows"])
+        self.check(INOX, [show("INOX")], "INOX Velachery")  # INOX's first shows: a new cinema, not new shows
+        self.assertEqual(self.kinds(), ["opened", "new_shows", "also_open"])
 
     def test_closed_only_once_every_cinema_has_no_seats(self):
         self.check(PVR, [show("PVR")], "PVR Palazzo")
@@ -262,6 +286,26 @@ class AcrossTheCity(unittest.TestCase):
         self.assertEqual(self.kinds(), ["spread"])
         self.assertEqual(self.send.call_args.args[2], "Rohini")
 
+    def test_a_named_cinema_adding_shows_or_releasing_seats(self):
+        self.check(at("Kasi", 1, avail=5))
+        self.task["settle_until"] = 0
+        self.check(at("Kasi", 1, avail=5), at("Kasi", 1, n=2))  # Kasi added a show
+        self.assertEqual(self.kinds(), ["opened", "new_shows"])
+        self.assertEqual(self.send.call_args.args[2], "Kasi")
+        self.check(at("Kasi", 1, avail=40), at("Kasi", 1, n=2))  # 35 seats unblocked
+        self.assertEqual(self.kinds(), ["opened", "new_shows", "seats_back"])
+        self.assertEqual(self.send.call_args.args[1][0]["was"], 5)
+
+    def test_a_named_cinema_opening_another_day_is_new_shows(self):
+        tomorrow = str(now_ist().date() + timedelta(days=1))
+        page2 = engine.district.city_movie_url(MOVIE, "chennai", tomorrow)
+        later = lambda s: dict(s, start=s["start"] + timedelta(days=1), url=s["url"] + "-t")  # noqa: E731
+        self.check(at("Kasi", 1))
+        self.task["settle_until"] = 0
+        engine.check_task(self.task, page2, tomorrow, "Cinemas in Chennai", [])
+        engine.check_task(self.task, page2, tomorrow, "Cinemas in Chennai", [later(at("Kasi", 1))])
+        self.assertEqual(self.kinds(), ["opened", "new_shows"])  # like a watcher on Kasi would say
+
     def test_the_card_shows_where_its_open_and_the_alerts_sent(self):
         self.check(at("Kasi", 1))
         self.wait()
@@ -276,7 +320,7 @@ class AcrossTheCity(unittest.TestCase):
         self.assertIn("1 show</span>", card)           # Kasi was in the first alert
         self.assertLess(card.index(">AGS<"), card.index(">Kasi<"))
         self.assertIn("ags-CD2?fromdate=", card)       # each cinema links to its page
-        self.assertIn("Open at more cinemas", card)    # the alerts sent, newest first
+        self.assertIn("New cinema open", card)         # the alerts sent, newest first
         self.assertIn('class="bt-sent"', card)
 
     def test_watchers_saved_with_a_list_still_work(self):
@@ -336,8 +380,30 @@ class Cards(unittest.TestCase):
         self.assertIn("Not checked yet", card)
 
     def test_one_cinema_keeps_the_single_line(self):
-        task = watcher(cinemas=[{"url": PVR, "name": "PVR Palazzo"}])
-        self.assertNotIn('class="bt-cinemas"', views.watcher_card("w1", task, {"owner": "o"}))
+        task = watcher(cinemas=[{"url": PVR, "name": "PVR Palazzo, The Nexus Vijaya Mall, Chennai"}])
+        card = views.watcher_card("w1", task, {"owner": "o"})
+        self.assertNotIn('class="bt-cinemas"', card)
+        self.assertIn(f'href="{PVR}"', card)  # its own name and link, not "Cinema"
+        self.assertIn(">PVR Palazzo, The Nexus Vijaya Mall<svg", card)  # the city cut, as everywhere
+
+    def test_the_row_says_when_there_are_more_cinemas(self):
+        row = views.watcher_row("w1", state["tasks"]["w1"], {"owner": "o", "admin": True})
+        self.assertIn(">+2 cinemas</span>", row)
+        self.assertIn("Also watching INOX Velachery, AGS Villivakkam", row)
+        one = views.watcher_row("w1", watcher(cinemas=[{"url": PVR, "name": "PVR Palazzo"}]), {"owner": "o"})
+        self.assertNotIn("bt-wrow-more", one)
+        city = views.watcher_row("w1", watcher(scope="city", city="chennai", cinemas=[{"url": PVR, "name": "PVR"}]),
+                                 {"owner": "o"})
+        self.assertIn("Any cinema in Chennai", city)
+        self.assertIn(">+1 cinema</span>", city)
+
+    def test_cinema_names_drop_only_a_real_city(self):
+        short = engine.district.short_cinema_name
+        self.assertEqual(short("PVR Grand Mall, Velachery, Chennai"), "PVR Grand Mall, Velachery")
+        self.assertEqual(short("PVR Aerohub, Chennai (Audi 3-All New 3D Projection)"),
+                         "PVR Aerohub, Chennai (Audi 3-All New 3D Projection)")
+        self.assertEqual(short("Sri Ganga Cinemas, Kolathur"), "Sri Ganga Cinemas, Kolathur")
+        self.assertEqual(short("Cinepolis, Phoenix, New Delhi"), "Cinepolis, Phoenix")
 
 
 class Limits(unittest.TestCase):

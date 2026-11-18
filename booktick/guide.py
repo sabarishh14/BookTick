@@ -1,5 +1,6 @@
 """The "How to use" tab: the full guide, opened from the tab bar or the header button."""
-from .config import MAX_CINEMAS_PER_WATCHER, MAX_RANGE_DAYS, MAX_SEATMAPS, MAX_TRACKED_SHOWS, MAX_TRACKERS_PER_PERSON, MAX_WATCHERS_PER_PERSON
+from .config import (MAX_CINEMAS_PER_WATCHER, MAX_RANGE_DAYS, MAX_SEATMAPS, MAX_TRACKED_SHOWS, MAX_TRACKERS_PER_PERSON,
+                     MAX_WATCHERS_PER_PERSON, MORE_SEATS_MIN, NEW_SHOWS_GAP, SEATS_BACK_GAP)
 from .views import RESTART_TIP
 
 GUIDE_HTML = f"""
@@ -38,14 +39,18 @@ GUIDE_HTML = f"""
 <section>
   <h2>3. What you'll get</h2>
   <ul class="alerts">
-    <li><b>🚨 Tickets open</b> As soon as a matching show has seats. Tap it to open the theatre's page for that date.
+    <li><b>🚨 Bookings open</b> As soon as a matching show has seats. Tap it to open the theatre's page for that date.
       It repeats as reminders (set by <b>Alerts when bookings open</b>) until you tap a button in it.</li>
-    <li><b>🚨 Now also open</b> Watching a few cinemas? When another one opens later, you hear about that too.</li>
+    <li><b>🏛️ New cinema open</b> Watching a few cinemas, or a whole city? Each cinema that opens later is named
+      when its first shows open (across a city, ones that open within a few minutes share an alert).</li>
+    <li><b>🆕 New shows added</b> A cinema that's already open adds shows, like a late-night IMAX one
+      (at most once every {NEW_SHOWS_GAP // 60} minutes; shows added in between come in the next one).</li>
+    <li><b>🎟️ Seats released</b> Seats come back in a show that's already listed: {MORE_SEATS_MIN} or more
+      unblocked, or any after it was sold out. Each line says how many (at most once every {SEATS_BACK_GAP // 60} minutes).</li>
     <li><b>🗺️ Seat map</b> A few seconds later, a picture of each matching show's seats (up to {MAX_SEATMAPS}): outlined seats
       are free, grey ones are sold or blocked, and the screen is at the bottom. It's just for looking, so tapping it does nothing.</li>
     <li><b>⏸️ Bookings closed</b> If the shows sell out or are taken off sale, BookTick tells you and keeps watching.</li>
-    <li><b>🔁 Bookings reopened · 🎟️ More seats</b> If they come back, or a show suddenly gets more seats
-      (at most once every 15 minutes).</li>
+    <li><b>🔁 Bookings reopened</b> If they come back after that.</li>
   </ul>
   <p class="bt-guide-after">ntfy alerts have two buttons: <span class="tag">Booked it, stop watching</span> and
     <span class="tag">Got it, keep watching</span> (which stops the reminders but keeps watching). Telegram and Discord

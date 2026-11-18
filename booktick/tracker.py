@@ -20,7 +20,7 @@ import time
 from collections import Counter
 from datetime import datetime
 
-from . import seatmap
+from . import district, seatmap
 from .alerts import describe_results, send_report
 from .config import (APP_NAME, BLOCK_MIN, HOLD_MAX, HOLD_WINDOW, MAX_TRACKED_SHOWS, PUBLIC_URL, RELEASE_MIN, REPORT_AFTER,
                      TRACK_MAP_GAP, TRACK_MAP_GAP_FAR, TRACK_MAP_SPACING, TRACK_SAVE_EVERY)
@@ -48,7 +48,8 @@ def tracker_title(task):
 
 
 def place_of(task):
-    return task.get("cinema_name") or "the cinema"
+    """The tracker's cinema, named the way the rest of BookTick names it."""
+    return district.short_cinema_name(task.get("cinema_name")) or "the cinema"
 
 
 # ---------------------------------------------------------------------------

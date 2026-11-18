@@ -217,6 +217,7 @@ def picked_formats(value):
 
 
 def cinema_name(link):
+    """District's full name for a cinema (it's stored whole; pages show engine.cinema_label)."""
     return district.known_cinema_name(link) or district.cinema_name_from_url(link)
 
 
@@ -341,7 +342,8 @@ def test_user_notification(session, user_name, cinema_value, cin_url, ntfy_top, 
     except ValueError:
         city, links = None, []
     link = links[0] if links and not city else None
-    place = (f"Cinemas in {district.city_label(city)}" if city else cinema_name(link) if link else "Sample Cinema")
+    place = (f"Cinemas in {district.city_label(city)}" if city
+             else district.short_cinema_name(cinema_name(link)) if link else "Sample Cinema")
     results = send_task_notification(task, sample_shows(link, place), place, test=True)
     if all(ok for _, ok, _ in results):
         return callout("ok", "Test alert sent. Check your phone.", esc(describe_results(results)))
@@ -473,7 +475,7 @@ def rearm_watcher(task):
         return False, "This watcher's dates have passed. Create a new one instead."
     task.update(alert_count=0, status="Active", phase="waiting", reminders_left=0, booked=False, last_result="",
                 last_checked="", last_checked_ts=None, last_alert_ts=0)
-    for key in ("page_seats", "told_cinemas", "told_quiet_until", "city_open", "alert_log"):
+    for key in ("page_seats", "told_cinemas", "told_quiet_until", "city_open", "alert_log", "seat_base"):
         task.pop(key, None)  # start fresh, so bookings that are open now alert again
     add_log(f"🔄 [{task.get('user_label')}] re-armed: alert count reset and watching again.", (task.get("owner"),))
     return True, f"Re-armed the {watcher_title(task)} watcher. It's watching again."

@@ -9,7 +9,7 @@ import requests
 from .actions import action_url
 from .config import APP_NAME, BRAND_DISCORD_COLOR
 from .core import fmt_price, fmt_when, now_ist, plural, redact, seats_text, shorten, task_cinemas
-from .district import city_label, query_url
+from .district import city_label, query_url, short_cinema_name
 
 
 def response_error(res):
@@ -27,10 +27,22 @@ def cinema_short(name, city=None):
     """A cinema's name without its city on the end: 'PVR Palazzo, The Nexus Vijaya Mall'."""
     name = str(name or "Cinema")
     tail = f", {city_label(city)}" if city else ""
-    return name[: -len(tail)] if tail and name.lower().endswith(tail.lower()) and len(name) > len(tail) else name
+    if tail and name.lower().endswith(tail.lower()) and len(name) > len(tail):
+        return name[: -len(tail)]
+    return short_cinema_name(name)
 
 
-def show_lines(shows, limit=5, city=None):
+def seats_change(show):
+    """For a show that got seats back ("was" is what it had): '+42 seats · 120 of 442 seats left',
+    or 'back from sold out · 12 of 442 seats left'. Otherwise just the seats left."""
+    was = show.get("was")
+    if was is None or show.get("avail") is None:
+        return seats_text(show)
+    change = "back from sold out" if was == 0 else f"+{show['avail'] - was} seats"
+    return f"{change} · {seats_text(show)}"
+
+
+def show_lines(shows, limit=5, city=None, kind=None):
     """One line per show. Shows at several cinemas (a city-wide alert) get one line per cinema
     instead, so every cinema is named, not just the first few shows'."""
     cinemas = list(dict.fromkeys(s.get("cinema") or "Cinema" for s in shows))
@@ -39,13 +51,17 @@ def show_lines(shows, limit=5, city=None):
         for name in cinemas[:CINEMA_LINES]:
             mine = [s for s in shows if (s.get("cinema") or "Cinema") == name]
             formats = ", ".join(dict.fromkeys(str(s["format"]) for s in mine))
-            lines.append(f"• {shorten(cinema_short(name, city), 60)} · {formats} · "
-                         f"{plural(len(mine), 'show')} from {fmt_when(mine[0]['start'])}")
+            if kind == "seats_back":
+                gained = sum(max(0, (s.get("avail") or 0) - (s.get("was") or 0)) for s in mine)
+                what = f"+{gained} seats in {plural(len(mine), 'show')}"
+            else:
+                what = f"{plural(len(mine), 'new show' if kind == 'new_shows' else 'show')} from {fmt_when(mine[0]['start'])}"
+            lines.append(f"• {shorten(cinema_short(name, city), 60)} · {formats} · {what}")
         if len(cinemas) > CINEMA_LINES:
             lines.append(f"…and {plural(len(cinemas) - CINEMA_LINES, 'more cinema')}")
         return lines
     for s in shows[:limit]:
-        lines.append(f"• {fmt_when(s['start'])} · {s['format']} · {seats_text(s)} · {fmt_price(s['price'])}")
+        lines.append(f"• {fmt_when(s['start'])} · {s['format']} · {seats_change(s)} · {fmt_price(s['price'])}")
     if len(shows) > limit:
         lines.append(f"…and {len(shows) - limit} more")
     return lines
@@ -71,39 +87,56 @@ BUTTONS = {
     "reopened": [("Booked it, stop watching", "stop"), ("Got it, keep watching", "keep")],
     "reminder": [("Booked it, stop watching", "stop"), ("Got it, keep watching", "keep")],
     "more_seats": [("Booked it, stop watching", "stop")],
+    "new_shows": [("Booked it, stop watching", "stop")],
+    "seats_back": [("Booked it, stop watching", "stop")],
     "also_open": [("Booked it, stop watching", "stop"), ("Got it, keep watching", "keep")],
     "spread": [("Booked it, stop watching", "stop"), ("Got it, keep watching", "keep")],
     "closed": [("Yes, booked. Stop watching", "stop"), ("Not yet, keep watching", "keep")],
 }
 
 
-def wording(kind, name, shows, count, max_alerts, reason):
-    """(headline, intro) for an alert."""
+def wording(kind, name, shows, count, max_alerts, reason, place=""):
+    """(headline, intro) for an alert: the headline says what happened, the intro where.
+
+    opened: the first shows anywhere it watches. also_open / spread: a cinema's first shows,
+    after that. new_shows: a cinema already open added shows. seats_back: seats came back in
+    shows already listed (released, or back from sold out).
+    """
     n = plural(len(shows), "matching show")
+    at = f" at {place}" if place else ""
     if kind == "reopened":
-        return f"🔁 Bookings reopened: {name}", f"They're back. {n} with seats right now."
+        return f"🔁 Bookings reopened: {name}", f"They're back{at}. {n} with seats right now."
     if kind == "reminder":
-        return f"🚨 [{count}/{max_alerts}] Still open: {name}", f"{n} still have seats."
-    if kind == "more_seats":
-        return f"🎟️ More seats: {name}", "Seats just freed up in these shows:"
+        return f"🚨 [{count}/{max_alerts}] Still open: {name}", f"{n} still have seats{at}."
     if kind == "also_open":
-        return f"🚨 Now also open: {name}", f"Bookings just opened at one of your cinemas. {n} with seats right now."
+        return (f"🏛️ New cinema open: {name}",
+                f"{place or 'One of your cinemas'} just opened bookings for the first time. {n} with seats right now.")
     if kind == "spread":
-        return f"🚨 Open at more cinemas: {name}", f"Bookings just opened at more cinemas in the city. {n} with seats right now."
+        return (f"🏛️ {'More cinemas' if len({s.get('cinema') for s in shows}) > 1 else 'New cinema'} open: {name}",
+                f"Bookings just opened for the first time{at}. {n} with seats right now.")
+    if kind == "new_shows":
+        added = "a new show" if len(shows) == 1 else f"{len(shows)} new shows"
+        return (f"🆕 {'New show' if len(shows) == 1 else 'New shows'} added: {name}",
+                f"{place or 'The cinema'} added {added} (bookings there were already open).")
+    if kind == "seats_back":
+        return (f"🎟️ Seats released: {name}",
+                f"{place or 'The cinema'} released seats in {plural(len(shows), 'show')} already on sale.")
+    if kind == "more_seats":  # alerts from before these were split up
+        return f"🎟️ More seats: {name}", "Seats just freed up in these shows:"
     if kind == "closed":
         why = ("Every matching show is sold out right now." if reason == "sold_out"
                else "The shows have been taken off sale for now.")
         return (f"⏸️ Bookings closed: {name}",
                 f"{why} BookTick keeps watching and will tell you if they come back. Did you get tickets?")
-    return f"🚨 Tickets open: {name}", f"{n} with seats right now."
+    return f"🚨 Bookings open: {name}", f"Bookings just opened{at}. {n} with seats right now."
 
 
 def send_task_notification(task, shows, place, kind="opened", count=1, max_alerts=1, reason=None, date=None, test=False):
     """Send one alert to every channel on the task. Returns [(channel, ok, detail), ...].
 
     `place` is the cinema, or "Cinemas in <city>". `kind` is opened, reopened, reminder,
-    more_seats, also_open (another of its cinemas), spread (more cinemas across a city) or
-    closed; a closed alert may have no shows (when they were taken off sale).
+    also_open (another of its cinemas), spread (more cinemas across a city), new_shows,
+    seats_back or closed; a closed alert may have no shows (when they were taken off sale).
     """
     titles = list(dict.fromkeys(s["title"] for s in shows)) or [task.get("movie_filter") or "your movie"]
     name = " / ".join(titles)
@@ -112,8 +145,9 @@ def send_task_notification(task, shows, place, kind="opened", count=1, max_alert
     if test:
         headline, intro = f"🧪 Test alert from {APP_NAME}", "Your alerts work. A real alert will look like this:"
     else:
-        headline, intro = wording(kind, name, shows, count, max_alerts, reason)
-    lines = show_lines(shows, city=task.get("city"))
+        headline, intro = wording(kind, name, shows, count, max_alerts, reason,
+                                  place=cinema_short(place, task.get("city")) if place else "")
+    lines = show_lines(shows, city=task.get("city"), kind=kind)
     if shows:
         links = alert_links(shows[0])
     elif task_cinemas(task) and task.get("scope") != "city":

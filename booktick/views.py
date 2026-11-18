@@ -466,10 +466,13 @@ def slots_label(slots):
 
 
 def place_html(task):
+    """Where a watcher (or seat tracker) looks, on one line: the city, or its cinema, linked."""
     if task.get("scope") == "city":
         return f'{icon("city")}<span>Any cinema in {esc(district.city_label(task.get("city")))}</span>'
-    cinema = esc(shorten(task.get("cinema_name") or district.cinema_name_from_url(task.get("cinema_url", "")), 52))
-    href = safe_href(task.get("cinema_url"))
+    cinemas = task_cinemas(task)  # watchers keep a list now; trackers and older watchers, cinema_url
+    first = cinemas[0] if cinemas else {"url": task.get("cinema_url") or "", "name": task.get("cinema_name")}
+    cinema = esc(shorten(engine.cinema_label(first), 52))
+    href = safe_href(first.get("url"))
     inner = f'<a href="{href}" target="_blank" rel="noopener noreferrer">{cinema}{icon("external")}</a>' if href else cinema
     return f'{icon("pin")}{inner}'
 
@@ -504,7 +507,7 @@ def cinemas_html(task_id, t, live):
         rows.append(f'<li class="{tone}"><span class="bt-cdot"></span>{link}{state_html}</li>')
     listed = f'<ul class="bt-cinemas">{"".join(rows)}</ul>'
     if not city:
-        return listed
+        return f'<div class="bt-cinemas-note">{plural(len(cinemas), "cinema")} · you hear as each one opens</div>{listed}'
     return (f'{place}<div class="bt-cinemas-note">Plus its own alert when '
             f'{"this cinema opens" if len(cinemas) == 1 else "each of these opens"}</div>{listed}')
 
@@ -543,8 +546,9 @@ def city_open_html(task_id, t):
     return f'<div class="bt-city-open">{out}</div>'
 
 
-ALERT_NAMES = {"opened": "Tickets open", "reopened": "Reopened", "reminder": "Reminder", "more_seats": "More seats",
-               "also_open": "Also open", "spread": "Open at more cinemas", "closed": "Closed"}
+ALERT_NAMES = {"opened": "Bookings open", "reopened": "Reopened", "reminder": "Reminder", "more_seats": "More seats",
+               "also_open": "New cinema open", "spread": "More cinemas open", "new_shows": "New shows",
+               "seats_back": "Seats released", "closed": "Closed"}
 
 
 def sent_html(t, phase, tone, sent):
@@ -561,7 +565,10 @@ def sent_html(t, phase, tone, sent):
             place = f'<a href="{href}" target="_blank" rel="noopener noreferrer">{place}{icon("external")}</a>'
         shows = f" · {plural(to_int(r.get('shows')) or 0, 'show')}" if r.get("shows") else ""
         failed = '<em class="bt-sent-fail">didn\'t go through</em>' if r.get("ok") is False else ""
-        items.append(f'<li><time>{esc(clock_at(r["ts"]))}</time><span><b>{esc(ALERT_NAMES.get(r.get("kind"), "Alert"))}'
+        what = ALERT_NAMES.get(r.get("kind"), "Alert")
+        if r.get("kind") == "spread" and r.get("cinemas") == 1:
+            what = "New cinema open"
+        items.append(f'<li><time>{esc(clock_at(r["ts"]))}</time><span><b>{esc(what)}'
                      f'</b> · {place}{shows}{failed}</span></li>')
     if sent > len(log):
         items.append('<li class="bt-sent-older"><span>Older alerts aren\'t listed.</span></li>')
@@ -852,17 +859,26 @@ def watcher_row(task_id, t, session):
     label, tone, group = STATUS_META.get(status, (status or "Unknown", "paused", "finished"))
     if status == "Done" and t.get("booked"):
         label = "Booked"
-    picks = len(task_cinemas(t))
-    where = (f"Any cinema in {district.city_label(t.get('city'))}" + (f" + {plural(picks, 'cinema')}" if picks else "")
-             if t.get("scope") == "city" else engine.task_place(t))
-    sub = " · ".join(x for x in (formats_label(t), task_dates_label(t), shorten(where, 46)) if x)
+    # Where it looks, then "+N cinemas" in a pill that never gets cut off with the rest.
+    cinemas = task_cinemas(t)
+    if t.get("scope") == "city":
+        where, more = f"Any cinema in {district.city_label(t.get('city'))}", len(cinemas)
+        more_tip = "Also alerts as each of these opens: " + ", ".join(engine.cinema_label(c) for c in cinemas)
+    else:
+        where = engine.cinema_label(cinemas[0]) if cinemas else "A cinema"
+        more = max(0, len(cinemas) - 1)
+        more_tip = "Also watching " + ", ".join(engine.cinema_label(c) for c in cinemas[1:])
+    sub = " · ".join(x for x in (formats_label(t), task_dates_label(t)) if x)
+    pill = (f'<span class="bt-wrow-more" title="{esc(more_tip)}">+{plural(more, "cinema")}</span>' if more else "")
+    # The cinema first (on a phone it's what's left), then its pill, then format and dates.
+    line = f'<span class="bt-wrow-where">{esc(where)}</span>{pill}<span class="bt-wrow-sub">· {esc(sub)}</span>'
     sent = to_int(t.get("alert_count")) or 0
     return f"""
 <details class="bt-wrow" data-group="{group}">
   <summary>
     {poster_html(t.get("movie_filter"), "bt-wrow-poster")}
     <span class="bt-badge s-{tone}">{label}</span>
-    <span class="bt-wrow-main"><b>{esc(watcher_title(t))}</b><small>{esc(sub)}</small></span>
+    <span class="bt-wrow-main"><b>{esc(watcher_title(t))}</b><small>{line}</small></span>
     <span class="bt-wrow-meta" title="Alerts sent">{icon("bell")}{sent}</span>
     {icon("chevron-down", "bt-wrow-chev")}
   </summary>

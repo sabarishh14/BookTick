@@ -504,6 +504,19 @@ def poster_for(name):
     return None
 
 
+def short_cinema_name(name):
+    """How BookTick shows a cinema: District's name without the city it ends with ('PVR Grand Mall,
+    Velachery, Chennai' -> 'PVR Grand Mall, Velachery'). Only a city District lists is cut, so
+    'PVR Aerohub, Chennai (Audi 3)' and names without one stay whole."""
+    name = str(name or "").strip()
+    head, comma, last = name.rpartition(",")
+    hit = peek("cities")
+    cities = set(hit["value"]) if hit else set(POPULAR_CITIES)
+    if comma and head.strip() and re.sub(r"\s+", "-", last.strip().lower()) in cities:
+        return head.strip()
+    return name
+
+
 def cinema_label(cinema, city):
     """'PVR Grand Mall, Velachery, Chennai' -> 'PVR Grand Mall, Velachery' (the city is already picked)."""
     return re.sub(rf",\s*{re.escape(city_label(city))}\s*$", "", cinema["name"], flags=re.I) or cinema["name"]

@@ -15,7 +15,7 @@ from . import district, seatmap, tracker
 from .actions import new_token
 from .alerts import alert_links, describe_results, send_seatmap, send_task_notification
 from .config import (ALERT_LOG_KEEP, CITY_LIST_MAX_AGE, CITY_SPREAD_GAP, FETCH_WORKERS, KEEP_FINISHED_DAYS, MAX_BACKOFF, MAX_BLOCK_BACKOFF,
-                     MAX_SEATMAPS, MORE_SEATS_GAP, MORE_SEATS_MIN, TIME_SLOTS)
+                     MAX_SEATMAPS, MORE_SEATS_GAP, MORE_SEATS_MIN, NEW_SHOWS_GAP, SEATS_BACK_GAP, TIME_SLOTS)
 from .core import (add_log, dates_label, format_matches, now_ist, plural, shorten, state, task_cinemas, task_dates,
                    task_formats,
                    tasks_lock, to_date, today_ist, wake_engine)
@@ -62,7 +62,8 @@ def wanted(task, show, date):
 
 
 def cinema_label(cinema):
-    return cinema.get("name") or district.cinema_name_from_url(cinema.get("url", ""))
+    """A watcher's cinema as BookTick shows it everywhere: 'PVR Palazzo, The Nexus Vijaya Mall'."""
+    return district.short_cinema_name(cinema.get("name")) or district.cinema_name_from_url(cinema.get("url", ""))
 
 
 def task_place(task):
@@ -116,12 +117,9 @@ def seat_counts(shows):
     return {s["url"]: (1 if s["avail"] is None else s["avail"]) for s in shows}
 
 
-def gained_seats(before, show):
-    """Did this show get seats since the last check: new, back from sold out, or MORE_SEATS_MIN more?"""
-    was = before.get(show["url"])
-    if was is None:
-        return True
-    if show["avail"] is None:
+def seats_came_back(was, show):
+    """Did a show already listed get seats back: from sold out, or MORE_SEATS_MIN more?"""
+    if was is None or show["avail"] is None:
         return False
     return (was == 0 < show["avail"]) or show["avail"] - was >= MORE_SEATS_MIN
 
@@ -140,12 +138,18 @@ def told_cinemas(task):
     return {str(k): 0 for k in raw if isinstance(k, str)} if isinstance(raw, list) else {}
 
 
+def named(told):
+    """The cinemas a city-wide watcher has named, on any day: one already open that adds shows
+    for another day gets "new shows", like a watcher on that cinema would, not "new cinema"."""
+    return {k.split("|", 1)[-1] for k in told}
+
+
 def shows_place(task, shows):
     """Where a city-wide alert's shows are: the cinema, or '27 cinemas in Chennai' (the alert
     then lists them, one line each)."""
     names = list(dict.fromkeys(str(s.get("cinema") or "") for s in shows))
     if len(names) == 1 and names[0]:
-        return names[0]
+        return district.short_cinema_name(names[0])
     return f"{len(names)} cinemas in {district.city_label(task.get('city'))}"
 
 
@@ -173,11 +177,11 @@ def check_task(task, page, date, place, shows):
         entry = cinema_for_page(task, page)  # None for a city's listings
         if entry is not None and place and place != district.cinema_name_from_url(entry["url"]):
             entry["name"] = place  # District's own name, when the page gives one
-        where = place if entry is not None or not city else task_place(task)
+        where = (cinema_label(entry) if entry is not None else district.short_cinema_name(place) if not city
+                 else task_place(task))
 
         # Seats per matching show on each of the watcher's pages (one per date, or per movie).
         pages = task.setdefault("page_seats", {})
-        before = pages.get(page)
         pages[page] = seat_counts(matched)
         expected = set(task.get("expected_pages") or [page])
         known = {p: pages[p] for p in expected if p in pages}
@@ -220,7 +224,7 @@ def check_task(task, page, date, place, shows):
             if now < task.get("told_quiet_until", 0):
                 told.update({key(s): told.get(key(s), 0) for s in open_now})
             own = {district.cinema_id_from_url(c["url"]) for c in task_cinemas(task)}
-            spread = [s for s in open_now if key(s) not in told and show_cinema(s) not in own]
+            spread = [s for s in open_now if show_cinema(s) not in named(told) and show_cinema(s) not in own]
             # For the card: the cinemas with seats on this page (each page is one movie and day).
             here = {}
             for s in open_now:
@@ -228,9 +232,34 @@ def check_task(task, page, date, place, shows):
                 row[2] += 1
             task.setdefault("city_open", {})[page] = here
 
+        # At cinemas that were already open: shows added since, and seats back in shows already
+        # listed, compared with what the last alert saw (seat_base). A change that has to wait for
+        # its gap stays out of seat_base, so the next alert has it instead of it being lost. For a
+        # minute after bookings open, every page just takes in what's there: that's all "open".
+        bases = task.setdefault("seat_base", {})
+        base = bases.get(page)
+        settling = now < task.get("settle_until", 0)
+        city_page = entry is None and city
+        if entry is not None:
+            cinema_was_open = page_base(page) in (task.get("open_places") or [])  # on any of its days
+        else:
+            cinema_was_open = any(n > 0 for n in (base or {}).values())
+        fresh, freed = [], []
+        if base is not None and phase == "open" and not settling:
+            for s in open_now:
+                if city_page and (show_cinema(s) not in named(told) or show_cinema(s) in own):
+                    continue  # a city cinema's first shows are "more cinemas"; its own cinemas, their pages
+                if not city_page and not cinema_was_open:
+                    continue  # this cinema opening at all is its own alert
+                if s["url"] not in base:
+                    fresh.append(s)
+                elif seats_came_back(base[s["url"]], s):
+                    freed.append(dict(s, was=base[s["url"]]))
+        quiet = task.get("reminders_left", 0) <= 0  # these wait until the reminders are done
+
         if is_open and phase != "open" and open_now:
             event = "reopened" if phase == "closed" else "opened"
-            task.update(phase="open", reminders_left=max_alerts - 1, last_spread_ts=now)
+            task.update(phase="open", reminders_left=max_alerts - 1, last_spread_ts=now, settle_until=now + 60)
             if entry is None and city:
                 told.update({key(s): told.get(key(s), now) for s in open_now})
         elif not is_open and phase == "open" and len(known) == len(expected):
@@ -240,20 +269,31 @@ def check_task(task, page, date, place, shows):
             alert_shows = matched
             task.update(phase="closed", reminders_left=0)
         elif phase == "open" and open_now and newly_open and says_also and now - also_sent >= MORE_SEATS_GAP:
-            event = "also_open"  # bookings opened at another of its cinemas
+            event = "also_open"  # bookings opened at another of its cinemas, the first time there
             task["also_open_ts"] = dict(task.get("also_open_ts") or {}, **{page_base(page): now})
-            task["last_more_ts"] = now
         elif phase == "open" and spread and now - task.get("last_spread_ts", 0) >= CITY_SPREAD_GAP:
-            event, alert_shows = "spread", spread  # opened at more cinemas
+            event, alert_shows = "spread", spread  # opened at more cinemas across the city
             told.update({key(s): now for s in spread})
-            task.update(last_spread_ts=now, last_more_ts=now)
-        elif (open_now and before is not None and task.get("reminders_left", 0) <= 0
-              and now - task.get("last_more_ts", 0) >= MORE_SEATS_GAP):
-            # Not the cinemas about to be named, or a city-wide watcher's own (their pages tell those).
-            freed = [s for s in open_now if gained_seats(before, s) and s not in spread and show_cinema(s) not in own]
-            if freed:
-                event, alert_shows = "more_seats", freed
-                task["last_more_ts"] = now
+            task["last_spread_ts"] = now
+        elif fresh and quiet and now - task.get("last_new_ts", 0) >= NEW_SHOWS_GAP:
+            event, alert_shows = "new_shows", fresh  # a cinema already open added shows
+            task["last_new_ts"] = now
+        elif freed and quiet and now - task.get("last_more_ts", 0) >= SEATS_BACK_GAP:
+            event, alert_shows = "seats_back", freed  # seats came back in shows already listed
+            task["last_more_ts"] = now
+
+        current = seat_counts(matched)
+        if base is None or settling or event in ("opened", "reopened", "also_open", "closed"):
+            bases[page] = current
+        else:
+            sent = {s["url"] for s in alert_shows} if event in ("new_shows", "seats_back") else set()
+            for s in fresh:
+                if s["url"] not in sent:
+                    current.pop(s["url"], None)  # still to be told
+            for s in freed:
+                if s["url"] not in sent:
+                    current[s["url"]] = s["was"]
+            bases[page] = current
         if (event is None and open_now and task.get("reminders_left", 0) > 0
                 and now - task.get("last_alert_ts", 0) >= state["interval_sec"] * 0.8):
             event = "reminder"  # at most one per round, even when several pages are open
@@ -273,9 +313,9 @@ def check_task(task, page, date, place, shows):
         if entry is None and city and event != "closed" and alert_shows:
             place_name = shows_place(task, alert_shows)  # a city's listings: name the cinemas, not just the city
         # The card lists the alerts sent, newest first, each linking to its cinema when there's one.
-        one_cinema = len({show_cinema(s) for s in alert_shows}) == 1
-        record = {"ts": now, "kind": event, "place": place_name, "shows": len(alert_shows),
-                  "link": alert_links(alert_shows[0])[0][1] if alert_shows and one_cinema else None}
+        cinemas_in = len({show_cinema(s) for s in alert_shows})
+        record = {"ts": now, "kind": event, "place": place_name, "shows": len(alert_shows), "cinemas": cinemas_in,
+                  "link": alert_links(alert_shows[0])[0][1] if alert_shows and cinemas_in == 1 else None}
         task["alert_log"] = (task.get("alert_log") or [])[-(ALERT_LOG_KEEP - 1):] + [record]
         task["alert_count"] = int(task.get("alert_count", 0)) + 1
         task["last_alert_ts"] = now
@@ -292,7 +332,8 @@ def check_task(task, page, date, place, shows):
         "opened": f"🔥 [{name}] bookings are open at {place_name}: {shows_text} with seats! Alerting…",
         "reopened": f"🔁 [{name}] bookings reopened at {place_name}: {shows_text} with seats! Alerting…",
         "reminder": f"🔥 [{name}] still open at {place_name}. Reminder {count}/{max_alerts}…",
-        "more_seats": f"🎟️ [{name}] seats freed up at {place_name} in {shows_text}. Alerting…",
+        "new_shows": f"🆕 [{name}] new shows at {place_name}: {shows_text} with seats. Alerting…",
+        "seats_back": f"🎟️ [{name}] seats released at {place_name} in {shows_text}. Alerting…",
         "also_open": f"🔥 [{name}] bookings are now also open at {place_name}: {shows_text} with seats! Alerting…",
         "spread": f"🔥 [{name}] now open at more cinemas: {place_name}, {shows_text} with seats. Alerting…",
         "closed": f"⏸️ [{name}] bookings closed at {place_name} "
@@ -590,6 +631,8 @@ def city_open(task_id):
             row = merged.setdefault(cid, {"name": name, "url": url, "shows": 0, "date": date, "at": 0})
             row["shows"] += shows
             row["date"] = min(row["date"], date)  # the link opens its first day with seats
-            row["at"] = max(row["at"], told.get(f"{date}|{cid}", 0))
+    for cid, row in merged.items():  # when it was first named, on any day
+        times = [at for k, at in told.items() if k.split("|", 1)[-1] == cid]
+        row["at"] = min(times) if times else 0
     rows = sorted(merged.values(), key=lambda r: (-r["at"], r["name"].lower()))
     return [(r["name"], district.query_url(r["url"], r["date"]) if r["url"] else None, r["shows"], r["at"]) for r in rows]

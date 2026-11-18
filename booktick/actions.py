@@ -61,7 +61,7 @@ def apply(token, choice):
         save_tasks()
     add_log(f"👍 [{name}] keep watching, says the alert.", owners)
     return True, (f"OK. No more reminders for now. BookTick keeps watching for {title} and will tell you "
-                  "if more seats free up or bookings close and reopen.")
+                  "if shows are added, seats are released, or bookings close and reopen.")
 
 
 PAGE = """<!doctype html>

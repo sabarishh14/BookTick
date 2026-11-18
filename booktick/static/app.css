@@ -679,7 +679,12 @@ a.bt-btn { text-decoration: none !important; }
 .bt-wrow .bt-badge { flex: none; min-width: 84px; justify-content: center; }
 .bt-wrow-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .bt-wrow-main b { font-size: .92rem; font-weight: 700; color: var(--bt-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bt-wrow-main small { font-size: .78rem; color: var(--bt-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bt-wrow-main small { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: .78rem; color: var(--bt-muted); }
+.bt-wrow-where { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bt-wrow-sub { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* "+2 cinemas": a watcher on more than the one named, kept whole however long the line is */
+.bt-wrow-more { flex: none; padding: 1px 7px; border-radius: 999px; font-size: .72rem; font-weight: 700;
+  color: var(--bt-brand); background: var(--bt-hot-bg); white-space: nowrap; }
 .bt-wrow-meta { flex: none; display: inline-flex; align-items: center; gap: 4px; font-size: .8rem; font-weight: 650; color: var(--bt-muted); }
 .bt-wrow-chev { flex: none; color: var(--bt-muted); transition: transform .2s; }
 .bt-wrow[open] .bt-wrow-chev { transform: rotate(180deg); }

@@ -18,6 +18,7 @@ from .core import add_log, plural, redact, save_needed, shorten, state, tasks_lo
 UNSTORED_KEYS = ("last_checked", "last_checked_ts", "last_result", "last_alert_ts", "last_more_ts",
                  "page_seats", "expected_pages", "seatmap_id", "seatmap_at",  # seat map images live in memory
                  "city_open",  # which cinemas across a city have seats, from the last checks
+                 "seat_base",  # seats each show had when its watcher last alerted (rebuilt after a restart)
                  # A seat tracker's live history changes on every check, so only the copy it
                  # makes every few minutes ("track_saved") is stored.
                  "track", "track_saved_ts")
