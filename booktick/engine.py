@@ -11,7 +11,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
-from . import district, seatmap, tracker
+from . import district, onsale, seatmap, tracker
 from .actions import new_token
 from .alerts import alert_links, describe_results, send_seatmap, send_task_notification
 from .config import (ALERT_LOG_KEEP, CINEMA_FLAP_GAP, CITY_LIST_MAX_AGE, CITY_SPREAD_GAP, DAY_END_MARGIN, FETCH_WORKERS, KEEP_FINISHED_DAYS, MAX_BACKOFF, MAX_BLOCK_BACKOFF,
@@ -52,7 +52,7 @@ def in_time_slots(show, slots):
 
 
 def seats_open(show):
-    return show["avail"] is None or show["avail"] > 0
+    return not show.get("closed") and (show["avail"] is None or show["avail"] > 0)
 
 
 def wanted(task, show, date):
@@ -113,8 +113,9 @@ def set_result(task, page, result, where=None, main=True):
 
 
 def seat_counts(shows):
-    """{show link: seats left}. A show with seats but no count (from Schema.org) counts as 1."""
-    return {s["url"]: (1 if s["avail"] is None else s["avail"]) for s in shows}
+    """{show link: seats left}. A show with seats but no count (from Schema.org) counts as 1, and one
+    District has greyed out as none."""
+    return {s["url"]: (0 if s.get("closed") else 1 if s["avail"] is None else s["avail"]) for s in shows}
 
 
 def seats_came_back(was, show, need=SEATS_MIN_DEFAULT):
@@ -182,6 +183,15 @@ def check_task(task, page, date, place, shows):
 
         # Seats per matching show on each of the watcher's pages (one per date, or per movie).
         pages = task.setdefault("page_seats", {})
+        # District can list shows with seats before the cinema takes bookings. A page that had no
+        # seats at the last check counts as open once a seat page there opens (held until then).
+        held = None
+        if open_now and not any(n > 0 for n in (pages.get(page) or {}).values()):
+            verdict, _ = onsale.verdict(open_now, date, page, check_again)
+            if verdict != "yes":
+                held = (verdict, len(open_now))
+                matched = [s for s in matched if not seats_open(s)]
+                open_now = alert_shows = []
         pages[page] = seat_counts(matched)
         expected = set(task.get("expected_pages") or [page])
         known = {p: pages[p] for p in expected if p in pages}
@@ -203,10 +213,15 @@ def check_task(task, page, date, place, shows):
                          if cinema_for_page(task, p) is None and p.endswith(f"fromdate={date}")]
             open_count = sum(1 for s in day_pages for n in s.values() if n > 0)
             match_count = sum(len(s) for s in day_pages)
-        set_result(task, page, f"🔥 {day}{plural(open_count, 'show')} open" if open_count
-                   else f"{day}Sold out · {plural(match_count, 'matching show')}" if match_count
-                   else f"{day}No match · {plural(len(listed), 'show')} {listed_where}" if listed
-                   else f"{day}No shows listed yet", where, main=entry is None or not city)
+        result = (f"🔥 {day}{plural(open_count, 'show')} open" if open_count
+                  else f"{day}Sold out · {plural(match_count, 'matching show')}" if match_count
+                  else f"{day}No match · {plural(len(listed), 'show')} {listed_where}" if listed
+                  else f"{day}No shows listed yet")
+        if held:
+            result = (f"🔎 {day}{plural(held[1], 'show')} listed, checking District is taking bookings"
+                      if held[0] == "asking" else
+                      f"⏳ {day}{plural(held[1], 'show')} listed, but District isn't taking bookings yet")
+        set_result(task, page, result, where, main=entry is None or not city)
 
         max_alerts = max(1, int(task.get("max_alerts", 5)))
         # Which of its own cinemas have seats now (a city's listings aren't one of them). Each one
@@ -451,6 +466,7 @@ def check_city_list(job, directory):
 _lock = threading.Lock()
 _pages = {}       # page -> {"next": time it's due, "fails": failures in a row}
 _inflight = set()  # pages being fetched right now
+_again = set()     # pages to check again as soon as the check they're in ends
 _block = {"until": 0.0, "strikes": 0}  # set when District turns requests away
 _stats = {"pages": 0, "failing": 0}
 _pool = ThreadPoolExecutor(FETCH_WORKERS, thread_name_prefix="booktick-fetch")
@@ -518,6 +534,23 @@ def run_page(page, job):
     finally:
         with _lock:
             _inflight.discard(page)
+            again = page in _again
+            _again.discard(page)
+            if again and page in _pages:
+                _pages[page]["next"] = 0
+        if again:
+            wake_engine.set()
+
+
+def check_again(pages):
+    """Check these pages again now: an answer has come about whether bookings there are open."""
+    with _lock:
+        for page in pages:
+            if page in _inflight:
+                _again.add(page)
+            elif page in _pages:
+                _pages[page]["next"] = 0
+    wake_engine.set()
 
 
 def page_succeeded(page, kind, job):

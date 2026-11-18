@@ -119,8 +119,8 @@ class Browser:
             executable_path=browser_path(), args=["--no-sandbox", "--disable-dev-shm-usage"])
         return self.browser
 
-    def layout(self, url):
-        """Open the seat page as a new guest and return the seat data District's page asks for."""
+    def seat_response(self, url):
+        """Open the seat page as a new guest: (HTTP status, JSON or None) of District's seat request."""
         context = self.ensure().new_context(viewport={"width": 1280, "height": 900})
         try:
             def route(r):
@@ -133,9 +133,19 @@ class Browser:
             with page.expect_response(lambda r: "/select-seat" in r.url and r.request.method == "POST",
                                       timeout=30000) as info:
                 page.goto(url, wait_until="commit", timeout=30000)
-            return info.value.json()
+            try:
+                return info.value.status, info.value.json()
+            except Exception:
+                return info.value.status, None
         finally:
             context.close()
+
+    def layout(self, url):
+        """The seat data District's seat page asks for, read as a new guest."""
+        status, body = self.seat_response(url)
+        if not isinstance(body, dict):
+            raise ValueError(f"District's seat data didn't load (HTTP {status})")
+        return body
 
     def png(self, page_html):
         page = self.ensure().new_page()
@@ -157,6 +167,74 @@ class Browser:
         except Exception:
             pass
         self.playwright = self.browser = None
+
+
+# ---------------------------------------------------------------------------
+# Is the show really on sale?
+# ---------------------------------------------------------------------------
+# District can list a show with seats before the cinema takes bookings for it: its seat page
+# then says "This showtime isn't available right now" (or the show has just expired).
+CLOSED_CODES = {"SHOW_CLOSED_ERR": "This showtime isn't available right now",
+                "OL_BK_UNA": "The showtime is no longer available"}
+TURNED_AWAY = (401, 403, 407, 429)  # District refusing BookTick, which says nothing about the show
+_layouts = {}  # show link -> (seat data, when): a seat page read to check a show, kept for its seat map
+KEEP_LAYOUT = 90
+
+
+def error_text(body):
+    """District's own words for a seat request it refused, if it gave any."""
+    code = str(body.get("mCode") or "")
+    status = body.get("status") if isinstance(body.get("status"), dict) else {}
+    msg = status.get("message")
+    if isinstance(msg, dict):
+        msg = msg.get("title") or msg.get("message")
+    msg = msg or body.get("message") or body.get("errorMessage") or (body.get("error") if isinstance(body.get("error"), str) else "")
+    return shorten(msg or CLOSED_CODES.get(code) or code, 140)
+
+
+def on_sale(status, body):
+    """("yes" | "no" | "unknown", why) from District's answer to a seat page's seat request.
+
+    "no" only when District answered and refused: anything else (turned away, no answer,
+    seat data BookTick can't read) is "unknown", so a show that is on sale is never held back.
+    """
+    if isinstance(body, dict) and seat_rows(body):
+        return "yes", ""
+    if not isinstance(body, dict) or status in TURNED_AWAY:
+        return "unknown", f"HTTP {status}" if status else "no answer"
+    if (status or 0) >= 400 or body.get("error") or body.get("mCode"):
+        return "no", error_text(body) or f"HTTP {status}"
+    return "unknown", "no seat layout in District's answer"
+
+
+def keep_layout(url, body):
+    now = time.time()
+    with _images_lock:
+        for key in [k for k, (_, at) in _layouts.items() if now - at > KEEP_LAYOUT]:
+            del _layouts[key]
+        _layouts[url] = (body, now)
+
+
+def kept_layout(url):
+    with _images_lock:
+        body, at = _layouts.get(url, (None, 0))
+    return body if body is not None and time.time() - at <= KEEP_LAYOUT else None
+
+
+def check_on_sale(url, done):
+    """Queue a look at one show's seat page, ahead of seat trackers. `done("yes"|"no"|"unknown", why)`
+    runs on the worker thread. False if it couldn't be queued."""
+    def job(browser):
+        try:
+            status, body = browser.seat_response(url)
+            verdict, why = on_sale(status, body)
+            if verdict == "yes":
+                keep_layout(url, body)  # its seat map, a moment later, needn't load the page again
+        except Exception as e:
+            browser.close()
+            verdict, why = "unknown", shorten(e, 120)
+        done(verdict, why)
+    return submit(0, job)
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +280,7 @@ def snapshot(browser, show, place):
     reuse = recent_image(show["url"])
     if reuse:
         return reuse
-    sections = seat_rows(browser.layout(show["url"]))
+    sections = seat_rows(kept_layout(show["url"]) or browser.layout(show["url"]))
     if not sections:
         raise ValueError("District's seat page had no seat layout")
     free, total = counts(sections)

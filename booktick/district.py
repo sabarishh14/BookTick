@@ -180,6 +180,8 @@ def make_show(session, title, cinema, content_id, fallback_url, fmt=None, cinema
         "audi": s.get("audi", ""),
         "avail": to_int(s.get("avail")),
         "total": to_int(s.get("total")),
+        # District greys out a show it won't sell ("D"), whatever its seat count says.
+        "closed": str(s.get("statusColor") or "").upper() == "D",
         "price": lowest_price(s.get("areas")),
         "url": session_booking_url(s, content_id, fallback_url),
     }

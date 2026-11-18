@@ -167,6 +167,12 @@ class Links(unittest.TestCase):
             "https://www.district.in/movies/seat-layout/42vo6x7qxpo?encsessionid=1037033-35388__1__1-obcqr6-42vo6x7qxpo"
             "&fromdate=2026-11-10&freeseating=false&fromsessions=true&type=CINEMAS&contentid=233181")
 
+    def test_a_greyed_out_show(self):
+        session = {"cid": 1, "sid": "2", "mid": "M", "fid": "f", "showTime": "2026-11-10T06:00", "avail": 40, "total": 90}
+        self.assertFalse(district.make_show(dict(session, statusColor="G"), "X", "PVR", 1, "u")["closed"])
+        self.assertTrue(district.make_show(dict(session, statusColor="D"), "X", "PVR", 1, "u")["closed"])
+        self.assertFalse(district.make_show(session, "X", "PVR", 1, "u")["closed"])
+
     def test_booking_link_needs_the_format_code(self):
         self.assertEqual(district.session_booking_url({"encSessionId": "1-2-3-4"}, 1, "fallback"), "fallback")
 

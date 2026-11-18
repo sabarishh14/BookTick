@@ -48,6 +48,50 @@ class Reading(unittest.TestCase):
         self.assertLess(page.index('class="row"'), page.index("SCREEN THIS WAY"))  # screen below the rows
 
 
+class OnSale(unittest.TestCase):
+    """District's answer to a seat page's seat request: is the show really on sale?"""
+    REFUSED = {"error": True, "code": 400, "mCode": "SHOW_CLOSED_ERR",
+               "status": {"message": {"title": "This showtime isn't available right now",
+                                      "message": "This showtime may be facing an issue or may have expired."}}}
+
+    def test_seats_mean_its_on_sale(self):
+        self.assertEqual(seatmap.on_sale(200, LAYOUT), ("yes", ""))
+
+    def test_district_refusing_the_show(self):
+        self.assertEqual(seatmap.on_sale(400, self.REFUSED), ("no", "This showtime isn't available right now"))
+        self.assertEqual(seatmap.on_sale(200, {"mCode": "SHOW_CLOSED_ERR"}), ("no", "This showtime isn't available right now"))
+        self.assertEqual(seatmap.on_sale(200, {"mCode": "OL_BK_UNA"}), ("no", "The showtime is no longer available"))
+        self.assertEqual(seatmap.on_sale(500, {"message": "Theatre is facing some issues"}),
+                         ("no", "Theatre is facing some issues"))
+
+    def test_when_it_cant_tell(self):
+        # Turned away, no answer, or seat data it can't read: never a reason to hold an alert back.
+        for status, body in [(429, {"error": "slow down"}), (403, {}), (200, None), (502, None), (200, {"seatLayout": {}})]:
+            self.assertEqual(seatmap.on_sale(status, body)[0], "unknown", (status, body))
+
+    def test_the_seat_map_reuses_the_page_it_checked(self):
+        browser = FakeBrowser()
+        browser.seat_response = lambda url: (200, LAYOUT)
+        url = SHOW["url"] + "-checked"
+        got = []
+        with mock.patch.object(seatmap, "submit", side_effect=lambda priority, job: job(browser) or True) as submit:
+            self.assertTrue(seatmap.check_on_sale(url, lambda verdict, why: got.append((verdict, why))))
+        self.assertEqual(submit.call_args.args[0], 0)  # ahead of seat trackers, with the seat maps
+        self.assertEqual(got, [("yes", "")])
+        seatmap.snapshot(browser, dict(SHOW, url=url), "PVR Palazzo")
+        self.assertEqual(browser.opened, 0)
+
+    def test_a_page_that_wont_load(self):
+        browser = FakeBrowser()
+        browser.seat_response = mock.Mock(side_effect=TimeoutError("Timeout 30000ms exceeded"))
+        browser.close = mock.Mock()
+        got = []
+        with mock.patch.object(seatmap, "submit", side_effect=lambda priority, job: job(browser) or True):
+            seatmap.check_on_sale(SHOW["url"] + "-slow", lambda verdict, why: got.append((verdict, why)))
+        self.assertEqual(got, [("unknown", "Timeout 30000ms exceeded")])
+        browser.close.assert_called_once()  # a fresh browser next time
+
+
 class Snapshots(unittest.TestCase):
     def setUp(self):
         seatmap._images.clear()
@@ -83,6 +127,7 @@ class Engine(unittest.TestCase):
         mock.patch("booktick.engine.save_tasks").start()
         mock.patch("booktick.engine.send_task_notification", return_value=[]).start()
         self.request = mock.patch("booktick.engine.seatmap.request").start()
+        mock.patch("booktick.engine.onsale.verdict", return_value=("yes", "")).start()
 
     def tearDown(self):
         mock.patch.stopall()

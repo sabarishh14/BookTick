@@ -99,6 +99,7 @@ class Checking(unittest.TestCase):
         self.send = mock.patch("booktick.engine.send_task_notification", return_value=[]).start()
         mock.patch("booktick.engine.save_tasks").start()
         mock.patch("booktick.engine.request_seatmap").start()
+        mock.patch("booktick.engine.onsale.verdict", return_value=("yes", "")).start()  # no browser here
         self.day_end = mock.patch("booktick.engine.DAY_END_MARGIN", -10 ** 9)  # shows count as ahead, any hour
         self.day_end.start()
         engine.plan([self.task], today_ist())
@@ -124,6 +125,16 @@ class Checking(unittest.TestCase):
         self.check(INOX, [show("INOX")], "INOX Velachery")
         self.check(AGS, [], "AGS Villivakkam")
         self.task["settle_until"] = 0
+        self.assertEqual(self.kinds(), ["opened", "also_open"])
+
+    def test_another_cinema_waits_for_district_to_take_bookings(self):
+        self.check(PVR, [show("PVR")], "PVR Palazzo")
+        with mock.patch("booktick.engine.onsale.verdict", return_value=("no", "")):
+            self.check(INOX, [show("INOX")], "INOX Velachery")
+        self.assertEqual(self.kinds(), ["opened"])
+        self.assertEqual(dict((n, s) for n, _, s, _ in engine.cinema_statuses("w1"))["INOX Velachery"], "waiting")
+        self.task["last_alert_ts"] = 0
+        self.check(INOX, [show("INOX")], "INOX Velachery")
         self.assertEqual(self.kinds(), ["opened", "also_open"])
 
     def test_one_cinema_sells_out_while_another_is_open(self):
@@ -227,6 +238,7 @@ class AnywhereAndCinemas(unittest.TestCase):
         self.send = mock.patch("booktick.engine.send_task_notification", return_value=[]).start()
         mock.patch("booktick.engine.save_tasks").start()
         mock.patch("booktick.engine.request_seatmap").start()
+        mock.patch("booktick.engine.onsale.verdict", return_value=("yes", "")).start()  # no browser here
         self.day_end = mock.patch("booktick.engine.DAY_END_MARGIN", -10 ** 9)  # shows count as ahead, any hour
         self.day_end.start()
         listing = {"value": {"movies": [{"name": "Avengers: Doomsday", "url": MOVIE}]}, "age": 0}
@@ -296,6 +308,7 @@ class AcrossTheCity(unittest.TestCase):
         self.send = mock.patch("booktick.engine.send_task_notification", return_value=[]).start()
         mock.patch("booktick.engine.save_tasks").start()
         mock.patch("booktick.engine.request_seatmap").start()
+        mock.patch("booktick.engine.onsale.verdict", return_value=("yes", "")).start()  # no browser here
         self.day_end = mock.patch("booktick.engine.DAY_END_MARGIN", -10 ** 9)  # shows count as ahead, any hour
         self.day_end.start()
         listing = {"value": {"movies": [{"name": "Avengers: Doomsday", "url": MOVIE}]}, "age": 0}

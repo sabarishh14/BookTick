@@ -39,7 +39,9 @@ GUIDE_HTML = f"""
 <section>
   <h2>3. What you'll get</h2>
   <ul class="alerts">
-    <li><b>🚨 Bookings open</b> As soon as a matching show has seats. Tap it to open the theatre's page for that date.
+    <li><b>🚨 Bookings open</b> As soon as a matching show has seats and its seat page opens. (District sometimes lists
+      shows before the cinema takes bookings, and tapping one says <i>This showtime isn't available right now</i>:
+      BookTick checks, and waits for those.) Tap it to open the theatre's page for that date.
       It repeats as reminders (set by <b>Alerts when bookings open</b>) until you tap a button in it.</li>
     <li><b>🏛️ New cinema open</b> Watching a few cinemas, or a whole city? Each cinema that opens later is named
       when its first shows open (across a city, ones that open within a few minutes share an alert).</li>

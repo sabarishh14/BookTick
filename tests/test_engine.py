@@ -75,6 +75,7 @@ class Alerts(unittest.TestCase):
         state["tasks"] = {"w_test": self.task}
         self.send = mock.patch("booktick.engine.send_task_notification", return_value=[("ntfy", True, "sent")]).start()
         mock.patch("booktick.engine.save_tasks").start()
+        self.verdict = mock.patch("booktick.engine.onsale.verdict", return_value=("yes", "")).start()
         # These shows are at fixed hours today; whatever the time, count them as still ahead
         # (the tests of the day ending switch this back).
         self.day_end = mock.patch("booktick.engine.DAY_END_MARGIN", -10 ** 9)
@@ -92,6 +93,40 @@ class Alerts(unittest.TestCase):
 
     def kinds(self):
         return [call.kwargs["kind"] for call in self.send.call_args_list]
+
+    def test_waits_for_district_to_take_bookings(self):
+        self.verdict.return_value = ("asking", "")
+        self.check([show(10), show(14)])
+        self.send.assert_not_called()
+        self.assertIn("2 shows listed, checking District is taking bookings", self.task["last_result"])
+        self.assertEqual(self.verdict.call_args.args[2], "page")  # so this page is checked again when it knows
+        self.verdict.return_value = ("no", "This showtime isn't available right now")
+        self.check([show(10), show(14)])
+        self.send.assert_not_called()
+        self.assertIn("listed, but District isn't taking bookings yet", self.task["last_result"])
+        self.assertNotEqual(self.task.get("phase"), "open")
+        self.verdict.return_value = ("yes", "")
+        self.check([show(10), show(14)])
+        self.assertEqual(self.kinds(), ["opened"])
+        self.assertEqual(len(self.shows_sent()), 2)
+        self.verdict.reset_mock()
+        self.check([show(10), show(14, avail=3)])
+        self.verdict.assert_not_called()  # open already: nothing to check
+
+    def test_held_again_after_closing(self):
+        self.check([show(10)])
+        self.check([show(10, avail=0)])  # sold out
+        self.verdict.return_value = ("no", "")
+        self.check([show(10, avail=5)])  # listed with seats again, but not on sale
+        self.assertEqual(self.kinds(), ["opened", "closed"])
+        self.verdict.return_value = ("yes", "")
+        self.check([show(10, avail=5)])
+        self.assertEqual(self.kinds(), ["opened", "closed", "reopened"])
+
+    def test_a_show_district_greyed_out(self):
+        self.check([dict(show(10), closed=True)])  # seats in the count, but District won't sell it
+        self.send.assert_not_called()
+        self.assertIn("Sold out", self.task["last_result"])
 
     def test_no_alert_without_a_match(self):
         self.check([show(10, title="Jailer 2")])
