@@ -93,12 +93,13 @@ with gr.Blocks(title=f"{APP_NAME} · Movie ticket alerts for District", theme=th
                         )
                         with gr.Accordion("Or paste a cinema link", open=False, elem_classes="bt-accordion") as link_accordion:
                             cin_url_input = gr.Textbox(
-                                label="Cinema page on District",
+                                label="Cinema page on District or BookMyShow",
                                 value="",
                                 max_lines=1,
-                                placeholder="https://www.district.in/movies/...",
-                                info="For a cinema that isn't in the list: open it on district.in and copy the link from the "
-                                     "address bar. It's added to your cinemas.",
+                                placeholder="https://www.district.in/movies/... or https://in.bookmyshow.com/cinemas/...",
+                                info="For a cinema that isn't in the list, or to watch it on BookMyShow: open the cinema "
+                                     "on district.in or bookmyshow.com and copy the link from the address bar. It's added "
+                                     "to your cinemas.",
                             )
                         preview_btn = gr.Button("Preview shows", variant="secondary")
                         preview_out = gr.HTML(elem_id="bt-preview")

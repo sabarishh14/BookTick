@@ -1,9 +1,10 @@
 """The checking engine: one scheduler thread and a few fetch workers, shared by every watcher.
 
-Every second the scheduler works out which District pages the active watchers need (one
-per cinema + date, or per movie + city + date for city-wide watchers) and hands the ones
-that are due to the workers. Watchers on the same page share one fetch. A page that fails
-is retried later and later; if District starts turning requests away, everyone waits.
+Every second the scheduler works out which pages the active watchers need (one per cinema +
+date, on District or BookMyShow, or per movie + city + date for city-wide watchers) and hands
+the ones that are due to the workers. Watchers on the same page share one fetch. A page that
+fails is retried later and later; if District or BookMyShow starts turning requests away,
+everything on that site waits.
 """
 import random
 import threading
@@ -11,10 +12,10 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
-from . import district, onsale, seatmap, tracker
+from . import bms, district, onsale, seatmap, tracker
 from .actions import new_token
 from .alerts import alert_links, describe_results, send_seatmap, send_task_notification
-from .config import (ALERT_LOG_KEEP, CINEMA_FLAP_GAP, CITY_LIST_MAX_AGE, CITY_SPREAD_GAP, DAY_END_MARGIN, FETCH_WORKERS, KEEP_FINISHED_DAYS, MAX_BACKOFF, MAX_BLOCK_BACKOFF,
+from .config import (ALERT_LOG_KEEP, BMS_MIN_INTERVAL, CINEMA_FLAP_GAP, CITY_LIST_MAX_AGE, CITY_SPREAD_GAP, DAY_END_MARGIN, FETCH_WORKERS, KEEP_FINISHED_DAYS, MAX_BACKOFF, MAX_BLOCK_BACKOFF,
                      MAX_SEATMAPS, MORE_SEATS_GAP, NEW_SHOWS_GAP, SEATS_BACK_GAP, SEATS_MIN_DEFAULT, TIME_SLOTS)
 from .core import (add_log, dates_label, format_matches, now_ist, plural, seats_min, shorten, state, task_cinemas,
                    task_dates, task_formats,
@@ -384,7 +385,7 @@ def check_task(task, page, date, place, shows):
         cinemas_in = len({show_cinema(s) for s in alert_shows})
         cinema_url = entry["url"] if entry is not None else None  # this page's cinema, when it is one
         link = (alert_links(alert_shows[0])[0][1] if alert_shows and cinemas_in == 1
-                else district.query_url(cinema_url, date) if cinema_url and event != "closed" else None)
+                else district.cinema_link(cinema_url, date) if cinema_url and event != "closed" else None)
         record = {"ts": now, "kind": event, "place": place_name, "shows": len(alert_shows), "cinemas": cinemas_in,
                   "link": link, "reason": reason}
         task["alert_log"] = (task.get("alert_log") or [])[-(ALERT_LOG_KEEP - 1):] + [record]
@@ -429,7 +430,7 @@ def request_seatmap(task, shows, place):
     They follow the opening alert one by one, a few seconds apart, so the alert itself is
     never held up.
     """
-    with_maps = [s for s in shows if "/seat-layout/" in s.get("url", "")]
+    with_maps = [s for s in shows if district.is_seat_page(s.get("url"))]  # District's: BookTick can open those
     for show in with_maps[:MAX_SEATMAPS]:
         seatmap.request(task, show, show.get("cinema") or place, seatmap_ready)  # each map says its cinema
     if len(with_maps) > MAX_SEATMAPS:
@@ -468,7 +469,14 @@ _pages = {}       # page -> {"next": time it's due, "fails": failures in a row}
 _inflight = set()  # pages being fetched right now
 _again = set()     # pages to check again as soon as the check they're in ends
 _block = {"until": 0.0, "strikes": 0}  # set when District turns requests away
+# ...and when BookMyShow does: then only its pages wait, and District's carry on (and the other way round).
+_blocks = {"district": _block, "bms": {"until": 0.0, "strikes": 0}}
+SOURCE_NAMES = {"district": "District", "bms": "BookMyShow"}
 _stats = {"pages": 0, "failing": 0}
+
+
+def source_of(page):
+    return "bms" if bms.is_bms(page) else "district"
 _pool = ThreadPoolExecutor(FETCH_WORKERS, thread_name_prefix="booktick-fetch")
 
 
@@ -555,11 +563,13 @@ def check_again(pages):
 
 def page_succeeded(page, kind, job):
     interval = CITY_LIST_MAX_AGE if kind == "list" else state["interval_sec"]
+    if source_of(page) == "bms":
+        interval = max(interval, BMS_MIN_INTERVAL)
     with _lock:
         recovered = _pages.get(page, {}).get("fails", 0) > 0
         # A little jitter so pages added together don't stay in lockstep.
         _pages[page] = {"next": time.time() + interval * random.uniform(0.9, 1.1), "fails": 0}
-        _block["strikes"] = 0
+        _blocks[source_of(page)]["strikes"] = 0
     state["check_count"] += 1
     state["last_check_time"] = now_ist()
     if recovered:
@@ -573,12 +583,16 @@ def page_failed(page, job, err):
         fails = _pages.get(page, {}).get("fails", 0) + 1
         _pages[page] = {"next": now + min(state["interval_sec"] * 2 ** fails, MAX_BACKOFF), "fails": fails}
         status = blocked_status(err)
+        source = source_of(page)
         if status:
-            _block["strikes"] += 1
-            wait = min(60 * 2 ** (_block["strikes"] - 1), MAX_BLOCK_BACKOFF)
-            _block["until"] = now + wait
+            block = _blocks[source]
+            block["strikes"] += 1
+            wait = min(60 * 2 ** (block["strikes"] - 1), MAX_BLOCK_BACKOFF)
+            block["until"] = now + wait
     if status:
-        add_log(f"⚠️ District turned a request away (HTTP {status}). Checking pauses for {wait // 60 or 1} min.", owners=())
+        which = "Checking" if source == "district" else f"Checking {SOURCE_NAMES[source]}"
+        add_log(f"⚠️ {SOURCE_NAMES[source]} turned a request away (HTTP {status}). {which} pauses for "
+                f"{wait // 60 or 1} min.", owners=())
     with tasks_lock:
         for task in job["tasks"]:
             if state["tasks"].get(task.get("id")) is task and task.get("status") == "Active":
@@ -635,7 +649,7 @@ def scheduler():
             if now - last_housekeeping > 60:
                 housekeeping(today)
                 last_housekeeping = now
-            if not state["paused"] and now >= _block["until"]:
+            if not state["paused"] and any(now >= b["until"] for b in _blocks.values()):
                 with tasks_lock:
                     active = [t for t in state["tasks"].values() if t.get("status") == "Active"]
                 pages = plan(active, today)
@@ -643,7 +657,8 @@ def scheduler():
                     for page in [p for p in _pages if p not in pages and p not in _inflight]:
                         del _pages[page]  # nobody needs it any more
                     _stats.update(pages=len(pages), failing=sum(1 for p in _pages.values() if p["fails"]))
-                    due = [p for p in pages if p not in _inflight and _pages.get(p, {}).get("next", 0) <= now]
+                    due = [p for p in pages if p not in _inflight and _pages.get(p, {}).get("next", 0) <= now
+                           and now >= _blocks[source_of(p)]["until"]]
                     _inflight.update(due)
                 for page in due:
                     _pool.submit(run_page, page, pages[page])
@@ -656,7 +671,7 @@ def scheduler():
 def health():
     """For the admin panel."""
     with _lock:
-        blocked_for = max(0, int(_block["until"] - time.time()))
+        blocked_for = max(0, int(max(b["until"] for b in _blocks.values()) - time.time()))
         return dict(_stats, inflight=len(_inflight), blocked_for=blocked_for)
 
 

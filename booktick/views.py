@@ -964,6 +964,8 @@ def show_chip(show, matched):
     sold_out = avail == 0
     if sold_out:
         seats, pct = "Sold out", 0
+    elif show.get("level"):
+        seats, pct = show["level"].capitalize(), None  # BookMyShow: how full, not how many
     elif avail is None:
         seats, pct = "Seats open", None
     elif total:

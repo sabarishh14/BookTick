@@ -68,7 +68,7 @@ def verdict(shows, date, page, check_again):
     by_cinema = {}
     for s in sorted(shows, key=lambda s: s["start"].timestamp() if s.get("start") else float("inf")):
         by_cinema.setdefault(cinema_of(s), []).append(s)
-    links = {c: next((s["url"] for s in group if "/seat-layout/" in s.get("url", "")), None)
+    links = {c: next((s["url"] for s in group if district.is_seat_page(s.get("url"))), None)
              for c, group in by_cinema.items()}
     if not any(links.values()):
         return "yes", ""  # no seat page to open, so no way to tell

@@ -1,0 +1,151 @@
+{
+ "ShowDetails": [
+  {
+   "Date": "20261120",
+   "Event": [
+    {
+     "EventTitle": "O.M Operation Mole",
+     "EventGroup": "EG00501898",
+     "ChildEvents": [
+      {
+       "EventCode": "ET00504901",
+       "EventName": "O.M Operation Mole - Tamil",
+       "EventDimension": "2D",
+       "EventLanguage": "Tamil",
+       "EventUrl": "om-operation-mole",
+       "EventCensor": "UA16+",
+       "ShowTimes": [
+        {
+         "ShowDateTime": "202611200715",
+         "ShowDateCode": "20261120",
+         "SessionId": "29813",
+         "AvailStatus": "0",
+         "ShowTime": "07:15 AM",
+         "MinPrice": "54.35",
+         "MaxPrice": "183.80",
+         "Attributes": "",
+         "ScreenName": "SERENE",
+         "CutOffDateTime": "202611200800"
+        },
+        {
+         "ShowDateTime": "202611200720",
+         "ShowDateCode": "20261120",
+         "SessionId": "29811",
+         "AvailStatus": "1",
+         "ShowTime": "07:20 AM",
+         "MinPrice": "54.35",
+         "MaxPrice": "183.80",
+         "Attributes": "",
+         "ScreenName": "SANTHAM",
+         "CutOffDateTime": "202611200805"
+        },
+        {
+         "ShowDateTime": "202611211015",
+         "ShowDateCode": "20261121",
+         "SessionId": "99999",
+         "AvailStatus": "0",
+         "ShowTime": "10:15 AM",
+         "MinPrice": "54.35",
+         "MaxPrice": "183.80",
+         "Attributes": "",
+         "ScreenName": "SERENE",
+         "CutOffDateTime": "202611200800"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "EventTitle": "Ramayana",
+     "EventGroup": "EG00449671",
+     "ChildEvents": [
+      {
+       "EventCode": "ET00523997",
+       "EventName": "Ramayana (3D)(Tamil) - Tamil",
+       "EventDimension": "3D",
+       "EventLanguage": "Tamil",
+       "EventUrl": "ramayana-3dtamil",
+       "EventCensor": "U",
+       "ShowTimes": [
+        {
+         "ShowDateTime": "202611201055",
+         "ShowDateCode": "20261120",
+         "SessionId": "29798",
+         "AvailStatus": "3",
+         "ShowTime": "10:55 AM",
+         "MinPrice": "94.35",
+         "MaxPrice": "223.80",
+         "Attributes": "",
+         "ScreenName": "SANTHAM",
+         "CutOffDateTime": "202611201140"
+        }
+       ]
+      },
+      {
+       "EventCode": "ET00493076",
+       "EventName": "Ramayana (3D)(Hindi) - Hindi",
+       "EventDimension": "3D",
+       "EventLanguage": "Hindi",
+       "EventUrl": "ramayana-3dhindi",
+       "EventCensor": "U",
+       "ShowTimes": [
+        {
+         "ShowDateTime": "202611201520",
+         "ShowDateCode": "20261120",
+         "SessionId": "29795",
+         "AvailStatus": "2",
+         "ShowTime": "03:20 PM",
+         "MinPrice": "99.43",
+         "MaxPrice": "242.49",
+         "Attributes": "",
+         "ScreenName": "STUDIO-5",
+         "CutOffDateTime": "202611201605"
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "Venues": {
+    "VenueCode": "PVSR",
+    "VenueName": "PVR: Sathyam, Royapettah",
+    "VenueCompName": "PVR",
+    "VenueAdd": "8, Thiru Vi Ka Road, Royapettah, Chennai, Tamil Nadu 600014, India",
+    "isVenueDown": false,
+    "IsFullLayout": "Y"
+   }
+  }
+ ],
+ "ShowDatesArray": [
+  {
+   "DispDate": "Today, 19 Nov",
+   "DateCode": "20261119",
+   "Day": "Thursday",
+   "Month": "November",
+   "Date": "19",
+   "Year": "2026",
+   "isDisabled": false
+  },
+  {
+   "DispDate": "Tomorrow, 20 Nov",
+   "DateCode": "20261120",
+   "Day": "Friday",
+   "Month": "November",
+   "Date": "20",
+   "Year": "2026",
+   "isDisabled": false
+  },
+  {
+   "DispDate": "Saturday, 21 Nov",
+   "DateCode": "20261121",
+   "Day": "Saturday",
+   "Month": "November",
+   "Date": "21",
+   "Year": "2026",
+   "isDisabled": false
+  }
+ ],
+ "AllShowDatesDisabled": false,
+ "DownCinemasMessage": "Bookings for this cinema are not going through due to a connectivity issue with cinema. Please try again later or explore other cinemas.",
+ "DownCinemasTitle": "Sorry!"
+}

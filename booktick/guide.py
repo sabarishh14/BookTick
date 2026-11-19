@@ -16,6 +16,13 @@ GUIDE_HTML = f"""
       (then again if another one opens). Or pick <b>Anywhere in &lt;city&gt;</b> to hear the moment it opens at any
       cinema there, then which cinemas open after it (a few minutes apart at most, so a rush is one alert). Pick both, and you hear the moment it opens anywhere, then again when each of your cinemas
       opens. A cinema that isn't listed? Paste its link from district.in under <b>Or paste a cinema link</b>.</li>
+    <li><b>BookMyShow-only cinemas.</b> Cinemas that sell only on BookMyShow, like Rohini or GK Cinemas, are in the
+      cinema list too, marked <b>BookMyShow</b> (or paste a cinema's link from bookmyshow.com). You get the same alerts
+      when bookings open, close and reopen there, and they open the cinema on BookMyShow. A cinema on both is always
+      watched on District, which BookTick reads more reliably, even if you paste its BookMyShow link. BookMyShow only
+      says how full a show is (filling fast, almost full), not how many seats are left, so <b>Seats released</b>
+      alerts, seat maps and seat trackers are District only. <b>Anywhere in &lt;city&gt;</b> covers District's cinemas;
+      tick BookMyShow ones as well to hear about them.</li>
     <li><b>Format.</b> Tick the ones you'd watch, like IMAX and 4DX, or leave them all unticked for any format.</li>
     <li><b>Show date.</b> One day, or up to {MAX_RANGE_DAYS} in a row with <b>A few days</b>. Times are Indian Standard Time.</li>
     <li><b>Show time.</b> Tick morning, afternoon, evening or night, or leave them all unticked for any time.</li>
@@ -99,7 +106,8 @@ GUIDE_HTML = f"""
     <li><b>Your watchers belong to this browser.</b> To see them on another device, use <b>Copy my link</b> on the Watchers
       tab and open it there. Keep that link to yourself: anyone with it can manage your watchers. If you clear this
       browser's data, you lose access to them, but they keep running and alerting.</li>
-    <li><b>Be ready to book.</b> Stay signed in to District on your phone, so you can book straight away when an alert comes.</li>
+    <li><b>Be ready to book.</b> Stay signed in to District (and BookMyShow, if you watch cinemas there) on your phone, so
+      you can book straight away when an alert comes.</li>
     <li>{RESTART_TIP}</li>
   </ul>
 </section>

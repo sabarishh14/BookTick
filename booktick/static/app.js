@@ -950,6 +950,7 @@ document.addEventListener("focusin", (e) => {
         const on = isPicked(c.u);
         const off = !on && full;
         const badge = hit ? '<span class="bt-cp-badge hot">Showing ' + esc(hit) + "</span>"
+          : c.s === "bms" ? '<span class="bt-cp-badge bms">BookMyShow</span>'  // not on District: watched there
           : '<span class="bt-cp-badge">' + (c.m || []).length + " movies</span>";
         return '<button type="button" class="bt-cp-row' + (on ? " is-on" : "") + (off ? " is-full" : "") +
           '" role="option" aria-selected="' + on + '" data-cp-cinema="' + esc(c.u) + '"' + (off ? ' title="Up to ' +
@@ -957,7 +958,7 @@ document.addEventListener("focusin", (e) => {
           esc(c.n) + "</b><small>" + esc(c.a || label) + (hit ? '<em class="bt-cp-hit"> · Showing ' + esc(hit) + "</em>" : "") +
           "</small></span>" + badge + "</button>";
       }).join("") : '<div class="bt-mp-empty">No cinema called “' + esc(S.q.trim()) + "” in " + esc(label) +
-        ". You can paste its link from district.in below.</div>";
+        ". You can paste its link from district.in or bookmyshow.com below.</div>";
     }
     const n = picked();
     const cinemas = n + (n === 1 ? " cinema" : " cinemas");

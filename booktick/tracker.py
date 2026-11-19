@@ -223,7 +223,7 @@ def next_map(task, track, now):
     due = []
     for key, rec in track["shows"].items():
         start = ts_of(rec["start"])
-        if now >= start or rec["gone"] or "/seat-layout/" not in (rec.get("url") or "") or (task["id"], key) in _pending:
+        if now >= start or rec["gone"] or not district.is_seat_page(rec.get("url")) or (task["id"], key) in _pending:
             continue
         urgent = rec.get("urgent") and now - rec["map_ts"] >= TRACK_MAP_SPACING
         if not urgent and (now - rec["map_ts"] < map_gap(start, now) or (rec["seats"] is not None and not rec["dirty"])):

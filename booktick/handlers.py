@@ -13,7 +13,7 @@ from datetime import timedelta
 
 import gradio as gr
 
-from . import access, district, engine, tracker
+from . import access, bms, district, engine, tracker
 from .actions import new_token
 from .names import name_for
 from .alerts import describe_results, sample_shows, send_task_notification
@@ -144,6 +144,12 @@ def cinema_catalog(city, directory):
     for c in (directory or {}).get("cinemas") or []:
         name, _, area = district.cinema_label(c, city).partition(", ")
         cinemas.append({"u": c["url"], "n": name, "a": area, "m": c["movies"]})
+    if directory:  # and BookMyShow's cinemas that District doesn't have, like Rohini or GK Cinemas
+        for v in district.bms_cinemas(city, directory):
+            name, _, area = v["name"].partition(":")
+            area = ", ".join(p for p in (area.strip(), "BookMyShow") if p)
+            cinemas.append({"u": v["url"], "n": name.strip(), "a": area, "m": [], "s": "bms"})
+        cinemas.sort(key=lambda c: c["n"].lower())
     return json.dumps({"city": city, "label": district.city_label(city), "cinemas": cinemas,
                        "formats": city_formats(directory)}, separators=(",", ":"), ensure_ascii=False)
 
@@ -163,8 +169,15 @@ def on_link_input(url, city):
     """A pasted cinema link: add it to the cinemas picked (the picker does that), then clear the box."""
     clean = district.clean_cinema_url(url)
     if not clean or not district.cinema_id_from_url(clean):
-        return keep(), (hint("That doesn't look like a cinema's link from district.in.") if str(url or "").strip() else ""), keep()
+        return keep(), (hint("That doesn't look like a cinema's link from district.in or bookmyshow.com.")
+                        if str(url or "").strip() else ""), keep()
     clean = clean.split("?")[0]
+    twin = district.district_twin(clean, city) if bms.is_bms(clean) else None
+    if twin:  # on District too, which BookTick reads more reliably
+        name = district.short_cinema_name(twin["name"])
+        add = json.dumps({"u": twin["url"], "n": twin["name"], "t": time.time()})
+        return add, hint(f"<b>{esc(name)}</b> is on District too, so BookTick watches it there (more reliable). "
+                         "Added it to your cinemas."), ""
     name = district.known_cinema_name(clean) or district.cinema_name_from_url(clean)
     add = json.dumps({"u": clean, "n": name, "t": time.time()})
     return add, hint(f"Added <b>{esc(name)}</b> to your cinemas."), ""
@@ -200,12 +213,14 @@ def watch_targets(cinema_value, cin_url=""):
     links, seen = [], set()
     for p in picks:
         link = district.clean_cinema_url(p)
+        twin = district.district_twin(link) if link and bms.is_bms(link) else None
+        link = twin["url"] if twin else link  # a cinema on both is watched on District
         cid = district.cinema_id_from_url(link)
         if link and cid and cid not in seen:
             seen.add(cid)
             links.append(link.split("?")[0])
     if not links and not city:
-        return None, [], "Pick a cinema (or anywhere in the city), or paste a cinema's link from district.in."
+        return None, [], "Pick a cinema (or anywhere in the city), or paste a cinema's link from district.in or bookmyshow.com."
     if len(links) > MAX_CINEMAS_PER_WATCHER:
         return None, [], f"A watcher can follow up to {MAX_CINEMAS_PER_WATCHER} cinemas. Remove a few, or pick anywhere in the city."
     return city, links, None
@@ -939,6 +954,8 @@ def add_tracker(session, user_name, cinema_value, day, fmt_val, movie, ntfy_top,
     url = district.clean_cinema_url(cinema_value)
     if not url:
         return fail("Which cinema?", "Pick a cinema from the list.")
+    if not district.is_district(url):
+        return fail("Which cinema?", "Seat trackers follow District cinemas: BookMyShow doesn't say how many seats are left.")
     if day not in {d for _, d in tracker_days()}:
         return fail("Pick a day", f"Choose today or one of the next {TRACK_DAYS_AHEAD - 1} days.")
     channels, error = clean_channels(ntfy_top, tg_tok, tg_chat, disc_url)

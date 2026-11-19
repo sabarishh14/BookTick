@@ -846,6 +846,7 @@ a.bt-btn { text-decoration: none !important; }
 .bt-cp-badge { flex: none; max-width: 42%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 3px 9px;
   border-radius: 999px; background: var(--bt-surface-2); color: var(--bt-muted); font-size: .72rem; font-weight: 650; }
 .bt-cp-badge.hot { background: var(--bt-ok-bg); color: var(--bt-ok); }
+.bt-cp-badge.bms { background: var(--bt-surface-2); color: var(--bt-text); }
 .bt-cp-count { margin-right: auto; font-size: .82rem; color: var(--bt-muted); }
 #bt-cinema-info:empty, #bt-cinema-info .prose:empty { display: none; }
 

@@ -9,7 +9,8 @@ import requests
 from .actions import action_url
 from .config import APP_NAME, BRAND_DISCORD_COLOR
 from .core import fmt_clock, fmt_price, fmt_when, now_ist, plural, redact, seats_text, shorten, task_cinemas
-from .district import city_label, query_url, short_cinema_name
+from .bms import is_bms
+from .district import cinema_link, city_label, short_cinema_name
 
 
 def response_error(res):
@@ -100,13 +101,15 @@ def alert_links(show):
 
     The District app opens cinema pages but sends seat-selection links to its home screen,
     so the cinema page comes first. The seat link still goes straight to the seat map in a
-    browser, for anyone without the app.
+    browser, for anyone without the app. A BookMyShow show opens its cinema's day on BookMyShow.
     """
     seats = show["url"]
     if not show.get("cinema_url"):
         return [("Open on District", seats)]
     date = show["start"].strftime("%Y-%m-%d") if show.get("start") else None
-    return [("Open cinema", query_url(show["cinema_url"], date)), ("Seat map (web)", seats)]
+    if is_bms(show["cinema_url"]):
+        return [("Open on BookMyShow", cinema_link(show["cinema_url"], date)), ("Pick seats (web)", seats)]
+    return [("Open cinema", cinema_link(show["cinema_url"], date)), ("Seat map (web)", seats)]
 
 
 # What each kind of alert says, and the buttons it has: (label, choice) for actions.apply.
@@ -191,9 +194,9 @@ def send_task_notification(task, shows, place, kind="opened", count=1, max_alert
     if shows:
         links = alert_links(shows[0])
     elif cinema_url:  # about one cinema, with no shows to link (taken off sale there)
-        links = [("Open cinema", query_url(cinema_url, date))]
+        links = [("Open cinema", cinema_link(cinema_url, date))]
     elif task_cinemas(task) and task.get("scope") != "city":
-        links = [("Open cinema", query_url(task_cinemas(task)[0]["url"], date))]
+        links = [("Open cinema", cinema_link(task_cinemas(task)[0]["url"], date))]
     else:
         links = []
     open_link = links[0][1] if links else None

@@ -27,6 +27,7 @@ CITY_LIST_MAX_AGE = 60       # city-wide watchers re-read a city's cinema list a
 FETCH_WORKERS = 4            # District pages fetched at the same time
 MAX_BACKOFF = 600            # longest wait before retrying a page that keeps failing (seconds)
 MAX_BLOCK_BACKOFF = 1800     # longest pause for everyone when District turns requests away
+BMS_MIN_INTERVAL = 15        # BookMyShow asked for a reasonable pace: its pages are never checked more often
 MAX_RANGE_DAYS = 7           # longest date range one watcher can cover
 KEEP_FINISHED_DAYS = 7       # finished watchers are removed this many days after their last date
 SEATS_MIN_DEFAULT = 5        # seats a show must get back (from sold out too) for a "seats released" alert…

@@ -126,6 +126,8 @@ def fmt_when(dt):
 
 
 def seats_text(show):
+    if show.get("level"):  # BookMyShow says how full a show is, not how many seats are left
+        return show["level"]
     if show["avail"] is None:
         return "seats open"
     if show["total"]:

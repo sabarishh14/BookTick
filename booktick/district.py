@@ -2,8 +2,12 @@
 
 District has no public API. BookTick reads the JSON its pages embed for the browser
 (Next.js's __NEXT_DATA__), with Schema.org events as a backup on cinema pages.
+
+A watcher's cinema can also be a BookMyShow cinema: the link helpers here (clean_cinema_url,
+cinema_id_from_url, cinema_link, fetch_shows, ...) recognise its links and hand them to bms.
 """
 import json
+import math
 import re
 import threading
 import time
@@ -12,6 +16,7 @@ from urllib.parse import urlparse
 
 import requests
 
+from . import bms
 from .core import IST, parse_time, to_float, to_int
 
 HEADERS = {
@@ -66,31 +71,55 @@ def dig(node, *keys):
 # ---------------------------------------------------------------------------
 # Links
 # ---------------------------------------------------------------------------
+def is_district(url):
+    host = (urlparse(str(url or "")).hostname or "").lower()
+    return host == "district.in" or host.endswith(".district.in")
+
+
 def clean_cinema_url(value):
-    """Return a usable district.in link (adding https:// if it's missing), or None."""
+    """Return a usable district.in link (adding https:// if it's missing), a BookMyShow cinema
+    link (without its date), or None."""
     url = (value or "").strip()
     if url and not re.match(r"^https?://", url, re.I):
         url = "https://" + url
-    host = (urlparse(url).hostname or "").lower()
-    if host == "district.in" or host.endswith(".district.in"):
-        return url
-    return None
+    if bms.is_bms(url):
+        return bms.clean_url(url)
+    return url if is_district(url) else None
 
 
 def cinema_name_from_url(url):
+    if bms.is_bms(url):
+        return bms.name_from_url(url)
     slug = str(url or "").split("?")[0].rstrip("/").split("/")[-1]
     slug = re.sub(r"-CD\d+$", "", slug, flags=re.I)
     return slug.replace("-", " ").title() or "Cinema"
 
 
 def cinema_id_from_url(url):
+    """District's cinema id ("1022244"), or "bms-<venue code>" for a BookMyShow cinema."""
+    if bms.is_bms(url):
+        code = bms.venue_code(url)
+        return f"bms-{code}" if code else None
     match = re.search(r"-CD(\d+)", str(url or ""), re.I)
     return match.group(1) if match else None
 
 
 def query_url(page_url, date):
+    """The page BookTick checks for a cinema (or a city's movie) on a day. Also how District
+    links a cinema's day; for a link to show people, use cinema_link."""
     base = page_url.split("?")[0].strip()
     return f"{base}?fromdate={date}" if date else base
+
+
+def cinema_link(page_url, date):
+    """A cinema's page on a day, to open: BookMyShow puts the day in the path."""
+    return bms.page_link(page_url, date) if bms.is_bms(page_url) else query_url(page_url, date)
+
+
+def is_seat_page(url):
+    """A District seat page, which BookTick can open as a guest (seat maps, the on-sale check).
+    BookMyShow's are behind its bot checks, so BookTick never opens those."""
+    return is_district(url) and "/seat-layout/" in str(url)
 
 
 def city_movie_url(movie_url, city, date=None):
@@ -294,6 +323,8 @@ def parse_city_movie_page(page, url):
 
 def fetch_shows(kind, url):
     """Fetch and parse one page: kind is "cinema" or "city"."""
+    if bms.is_bms(url):
+        return bms.fetch_shows(url)
     page = fetch_html(url)
     return parse_city_movie_page(page, url) if kind == "city" else parse_cinema_page(page, url)
 
@@ -458,6 +489,8 @@ def parse_city_page(page):
                 # District takes the cinema's display name from the link, so prefer its own links.
                 "url": "https://www.district.in" + links.get(cid, f"/movies/{slugify(name)}-CD{cid}"),
                 "movies": list(dict.fromkeys(here)),
+                "lat": to_float(info.get("lat")) or None,  # to find a BookMyShow cinema on District (district_twin)
+                "lon": to_float(info.get("lon")) or None,
             }
     if not cinemas:
         raise ValueError("District's page didn't list any cinemas")
@@ -485,11 +518,113 @@ def city_cinemas(city):
 
 
 def known_cinema_name(url):
-    """District's name for a cinema, from any city list already loaded (no network)."""
+    """District's name for a cinema, from any city list already loaded (no network). For a
+    BookMyShow cinema, BookMyShow's ("Rohini Silver Screens, Koyambedu (BookMyShow)")."""
+    if bms.is_bms(url):
+        code = bms.venue_code(url)
+        hit = next((v for venues in loaded("bms-city:") for v in venues if v["code"] == code), None)
+        return bms.cinema_name({"VenueName": hit["name"]}) if hit else None
     cid = cinema_id_from_url(url)
     with _cache_lock:
         lists = [hit["value"] for key, hit in _cache.items() if key.startswith("city:")]
     return next((c["name"] for d in lists for c in d["cinemas"] if cid and c["id"] == cid), None)
+
+
+TWIN_METRES = 400  # how close a District cinema must be to a BookMyShow one to be the same cinema
+# (the two sites put a big mall's cinema a few hundred metres apart: PVR VR Chennai, 339 m)
+GENERIC_WORDS = {"cinemas", "cinema", "theatre", "theatres", "theater", "screens", "screen", "multiplex", "the"}
+# What a cinema has, not who it is: left out when matching names ("Kasi Talkies Dolby Atmos" is "kasi talkies")
+TECH_WORDS = {"dolby", "atmos", "rgb", "laser", "4k", "2k", "3d", "4d", "a", "c", "ac", "dts", "7", "1", "imax", "4dx"}
+
+
+def metres_apart(lat1, lon1, lat2, lon2):
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    h = (math.sin((p2 - p1) / 2) ** 2
+         + math.cos(p1) * math.cos(p2) * math.sin(math.radians(lon2 - lon1) / 2) ** 2)
+    return 2 * 6371000 * math.asin(math.sqrt(h))
+
+
+def name_words(name):
+    return set(re.findall(r"[a-z0-9]+", str(name or "").lower()))
+
+
+def twin_in(place, cinemas):
+    """The District cinema (of `cinemas`) that is BookMyShow's `place` ({"name", "lat", "lon"}), or None.
+
+    The same cinema is within TWIN_METRES and District's name has every word of BookMyShow's
+    brand: "PVR" of "PVR: Sathyam, Royapettah", "AGS OMR" of "AGS Cinemas OMR: Navlur". Close
+    names aren't enough: "Kasi Talkies" and District's "Kasi RGB Laser", 194 m apart, are two
+    cinemas. So two chains in one mall stay apart, and when in doubt a cinema stays on
+    BookMyShow. Of a chain's cinemas that close, the one sharing the most words with
+    BookMyShow's name wins (two PVRs in one mall), then the nearest.
+    """
+    if not place or not place.get("lat") or not place.get("lon"):
+        return None
+    name = str(place.get("name") or "")
+    brand = name_words(name.split(":")[0] if ":" in name else name) - GENERIC_WORDS - TECH_WORDS
+    if not brand:
+        return None
+    all_words = name_words(name) - GENERIC_WORDS - TECH_WORDS
+    near = []
+    for c in cinemas or []:
+        if not c.get("lat") or not c.get("lon") or not brand <= name_words(c.get("name")):
+            continue
+        metres = metres_apart(place["lat"], place["lon"], c["lat"], c["lon"])
+        if metres <= TWIN_METRES:
+            near.append((-len(all_words & name_words(c.get("name"))), metres, c))
+    return min(near, key=lambda m: m[:2])[2] if near else None
+
+
+def loaded(prefix):
+    """Every cached value whose key starts with `prefix` (no network)."""
+    with _cache_lock:
+        return [hit["value"] for key, hit in _cache.items() if key.startswith(prefix) and hit["value"]]
+
+
+def bms_place(bms_url):
+    """BookMyShow's name and position for a cinema link: from a city's list already loaded, else
+    asked once a day. None if BookMyShow can't say."""
+    code = bms.venue_code(bms_url)
+    if not code:
+        return None
+    known = next((v for venues in loaded("bms-city:") for v in venues if v["code"] == code), None)
+    if known:
+        return known
+    try:
+        return cached(f"bms-venue:{code}", 24 * 3600, lambda: bms.venue(bms_url) or {}) or None
+    except Exception:
+        return None
+
+
+def district_twin(bms_url, city=None):
+    """The same cinema on District, for a BookMyShow cinema link: its District entry
+    ({"url", "name", ...}), or None. District is the more reliable source (seat counts, seat
+    maps), so a cinema on both is watched there. Looks in `city`'s cinemas and any city list
+    already loaded."""
+    place = bms_place(bms_url)
+    if not place:
+        return None
+    lists = []
+    if city:
+        try:
+            lists.append(city_directory(city))
+        except Exception:
+            pass
+    cinemas = [c for directory in lists + loaded("city:") for c in (directory or {}).get("cinemas") or []]
+    return twin_in(place, cinemas)
+
+
+def bms_cinemas(city, directory):
+    """BookMyShow's cinemas in one of District's cities that aren't on District (`directory` is
+    the city's District list): [{"code", "name", "lat", "lon", "down", "url"}]. Its city list is
+    asked once a day and its cinemas every 6 hours; [] when it has no such city or doesn't answer."""
+    try:
+        region = bms.region_for(city, cached("bms-regions", 24 * 3600, bms.regions))
+        venues = cached(f"bms-city:{city}", 6 * 3600, lambda: bms.city_venues(region), fallback=[]) if region else []
+    except Exception:
+        return []
+    ours = (directory or {}).get("cinemas") or []
+    return [v for v in venues if not twin_in(v, ours)]
 
 
 def city_of_cinema(url):
