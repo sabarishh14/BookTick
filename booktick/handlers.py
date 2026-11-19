@@ -267,10 +267,12 @@ def preview_shows(cinema_value, cin_url, movie_names, formats, slots, date_val):
             place, found = page_shows("cinema", district.query_url(link, date))
             places.append(place)
             shows += found
-        except Exception:
-            failed.append(cinema_name(link))
+        except Exception as e:
+            failed.append(f"{cinema_name(link)} ({bms.why(e)})")
     if not places:
-        return callout("err", "Couldn't load those cinemas", "District didn't answer. Try again in a moment.")
+        site = "BookMyShow" if all(bms.is_bms(link) for link in links) else "District"
+        return callout("err", "Couldn't load those cinemas",
+                       f"{site} didn't answer: {esc('; '.join(failed))}. Try again in a moment.")
     note = callout("warn", "Some cinemas didn't load", esc(", ".join(failed))) if failed else ""
     if len(places) == 1:
         return note + preview_html(places[0], shows, task, date, range_note, by="title")

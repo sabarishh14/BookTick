@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 import requests
 
 from . import bms
-from .core import IST, parse_time, to_float, to_int
+from .core import IST, add_log, parse_time, to_float, to_int
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -618,9 +618,21 @@ def bms_cinemas(city, directory):
     """BookMyShow's cinemas in one of District's cities that aren't on District (`directory` is
     the city's District list): [{"code", "name", "lat", "lon", "down", "url"}]. Its city list is
     asked once a day and its cinemas every 6 hours; [] when it has no such city or doesn't answer."""
+    def logged(what, load):
+        def run():
+            try:
+                return load()
+            except Exception as e:  # said in the admin log (at most every 5 minutes: cached retries then)
+                add_log(f"⚠️ BookMyShow's {what} didn't load ({bms.why(e)}), so the cinema list has District's only.",
+                        owners=())
+                raise
+        return run
+
     try:
-        region = bms.region_for(city, cached("bms-regions", 24 * 3600, bms.regions))
-        venues = cached(f"bms-city:{city}", 6 * 3600, lambda: bms.city_venues(region), fallback=[]) if region else []
+        region = bms.region_for(city, cached("bms-regions", 24 * 3600, logged("city list", bms.regions)))
+        venues = (cached(f"bms-city:{city}", 6 * 3600,
+                         logged(f"cinemas in {city_label(city)}", lambda: bms.city_venues(region)), fallback=[])
+                  if region else [])
     except Exception:
         return []
     ours = (directory or {}).get("cinemas") or []

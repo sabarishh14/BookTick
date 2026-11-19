@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, urlparse
 
 import requests
 
-from .core import IST, to_float
+from .core import IST, shorten, to_float
 
 HOST = "in.bookmyshow.com"
 SHOWTIMES_URL = f"https://{HOST}/api/v3/mobile/showtimes/byvenue"
@@ -104,6 +104,12 @@ def http(fresh=False):
         session.headers.update(HEADERS)
     _local.last_used = time.time()
     return session
+
+
+def why(err):
+    """What went wrong asking BookMyShow, in a few words: 'HTTP 403', or the error."""
+    status = getattr(getattr(err, "response", None), "status_code", None)
+    return f"HTTP {status}" if status else shorten(str(err) or type(err).__name__, 100)
 
 
 def fetch_json(params, url=SHOWTIMES_URL):

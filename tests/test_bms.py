@@ -12,6 +12,11 @@ import requests
 from booktick import alerts, bms, district, engine, onsale
 from booktick.core import IST, seats_text, state
 
+try:  # the form's code needs Gradio, which the GitHub test run doesn't install
+    import gradio
+except ImportError:
+    gradio = None
+
 HERE = os.path.dirname(__file__)
 LINK = "https://in.bookmyshow.com/cinemas/chen/pvr-sathyam-royapettah/buytickets/PVSR"
 PAGE = f"{LINK}?fromdate=2026-11-20"
@@ -215,6 +220,7 @@ class OnDistrictToo(unittest.TestCase):
         self.assertIs(district.twin_in({"name": "PVR: ICON Phoenix Palladium", "lat": 18.99406, "lon": 72.8240},
                                        [plain, icon]), icon)  # the nearer one isn't it
 
+    @unittest.skipUnless(gradio, "Gradio isn't installed")
     def test_bookmyshow_only_cinemas_in_the_list(self):
         from booktick import handlers
         venues = [dict(self.SATHYAM, code="PVSR", down=False, url=LINK),
@@ -230,6 +236,7 @@ class OnDistrictToo(unittest.TestCase):
         self.assertEqual(district.known_cinema_name(bms_rows[0]["u"]), "Rohini Silver Screens, Koyambedu (BookMyShow)")
         self.venue.assert_not_called()  # the city's list had its position
 
+    @unittest.skipUnless(gradio, "Gradio isn't installed")
     def test_bookmyshow_not_answering_leaves_districts_list(self):
         from booktick import handlers
         mock.patch("booktick.bms.regions", side_effect=requests.ConnectionError("down")).start()
@@ -271,6 +278,7 @@ class OnDistrictToo(unittest.TestCase):
         self.venue.side_effect = requests.ConnectionError("down")
         self.assertIsNone(district.district_twin(LINK))
 
+    @unittest.skipUnless(gradio, "Gradio isn't installed")
     def test_pasting_it_adds_the_district_cinema(self):
         from booktick import handlers
         add, note, _ = handlers.on_link_input(f"{LINK}/20261119", "testtwin")
